@@ -1,0 +1,36 @@
+# E-RAKSHAK Git Ignore
+
+# Android SDK Platform Tools (large binaries, download separately)
+platform-tools/
+
+# Open-source Node/TS workspace (unmodified mnfst/manifest clone)
+manifest/
+
+# Forensic evidence / case files (contains personal extracted data)
+cases/
+backend/cases/
+**/cases/
+**/*.jsonl
+**/*.txt
+**/*.json
+!backend/tests/**/*.json
+!backend/tests/**/*.txt
+!backend/tests/**/*.jsonl
+!**/requirements.txt
+
+# Python virtual environments & build artifacts
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.pytest_cache/
+.venv/
+venv/
+env/
+.env
+
+# General OS & IDE files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
