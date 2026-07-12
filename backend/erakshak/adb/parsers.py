@@ -885,3 +885,53 @@ def parse_dumpsys_battery_stats(text: str) -> list[dict[str, Any]]:
                 break  # one event per line
 
     return events
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Content query parsing
+# ═══════════════════════════════════════════════════════════════════════════
+
+def parse_content_query(text: str) -> list[dict[str, str]]:
+    """Parse the output of 'adb shell content query' commands.
+
+    Expected format per line:
+        Row: 0 col1=val1, col2=val2, col3=val3
+
+    Handles values containing commas or spaces using boundary detection on
+    field name matches. If output is empty or not in query format, returns
+    an empty list.
+    """
+    rows: list[dict[str, str]] = []
+    if not text:
+        return rows
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("Row:"):
+            continue
+
+        # Split into "Row:", "index", "col1=val1, col2=val2..."
+        parts = line.split(None, 2)
+        if len(parts) < 3:
+            continue
+        row_content = parts[2]
+
+        # Find all occurrences of field_name=
+        matches = list(re.finditer(r'(\w+)=', row_content))
+        if not matches:
+            continue
+
+        row_dict = {}
+        for i in range(len(matches)):
+            key = matches[i].group(1)
+            start_val = matches[i].end()
+            end_val = matches[i + 1].start() if i + 1 < len(matches) else len(row_content)
+
+            val = row_content[start_val:end_val].strip()
+            if val.endswith(","):
+                val = val[:-1].strip()
+            row_dict[key] = val
+
+        rows.append(row_dict)
+
+    return rows

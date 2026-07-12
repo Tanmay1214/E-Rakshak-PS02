@@ -176,3 +176,27 @@ def test_parse_battery() -> None:
     assert result["level"] == 85
     assert result["status"] == 2
     assert result["temperature"] == 280
+
+
+def test_parse_content_query() -> None:
+    from erakshak.adb.parsers import parse_content_query
+
+    sample = """
+Row: 0 display_name=Tanmay, has_phone_number=1, starred=0
+Row: 1 display_name=John Doe, has_phone_number=0, starred=1
+Some other text that shouldn't be parsed
+Row: 2 name=Special, Value, with comma, key=something
+"""
+    results = parse_content_query(sample)
+    assert len(results) == 3
+    
+    assert results[0]["display_name"] == "Tanmay"
+    assert results[0]["has_phone_number"] == "1"
+    assert results[0]["starred"] == "0"
+    
+    assert results[1]["display_name"] == "John Doe"
+    assert results[1]["has_phone_number"] == "0"
+    assert results[1]["starred"] == "1"
+
+    assert results[2]["name"] == "Special, Value, with comma"
+    assert results[2]["key"] == "something"

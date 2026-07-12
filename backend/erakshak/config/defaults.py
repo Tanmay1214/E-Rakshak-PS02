@@ -19,6 +19,7 @@ LONG_ADB_TIMEOUT: int = 120
 DUMPSYS_TIMEOUT: int = 60
 LOGCAT_TIMEOUT: int = 60
 MEDIA_PULL_TIMEOUT: int = 300
+CONTENT_QUERY_TIMEOUT: int = 30
 
 # ── Media collection defaults ────────────────────────────────────────────────
 DEFAULT_MEDIA_DAYS: int = 7
@@ -38,11 +39,13 @@ COLLECTOR_EXPECTED_FILES: list[str] = [
     "calls.jsonl",
     "sms.jsonl",
     "mms.jsonl",
+    "contacts.jsonl",
     "media_index.jsonl",
 ]
 
 # ── Collection status constants ──────────────────────────────────────────────
 STATUS_ACQUIRED: str = "acquired"
+STATUS_ACQUIRED_FROM_COLLECTOR: str = "acquired_from_collector"
 STATUS_PARTIAL: str = "partial"
 STATUS_FAILED: str = "failed"
 STATUS_UNAVAILABLE: str = "unavailable"

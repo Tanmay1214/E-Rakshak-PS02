@@ -39,6 +39,9 @@ from erakshak.acquisition.system_logs import acquire_system_logs
 from erakshak.acquisition.network import acquire_network
 from erakshak.acquisition.media import acquire_media
 from erakshak.acquisition.collector_import import import_collector_export
+from erakshak.acquisition.call_logs import acquire_call_logs
+from erakshak.acquisition.sms import acquire_sms
+from erakshak.acquisition.contacts import acquire_contacts
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -216,7 +219,7 @@ def cmd_acquire_part_a(args: argparse.Namespace) -> None:  # noqa: C901 — inte
 
     # Helper to run a module safely -----------------------------------
     def _run(name: str, fn, **kwargs) -> Any:  # type: ignore[no-untyped-def]
-        print(f"\n[{len(results)+1}/9] Running {name}...")
+        print(f"\n[{len(results)+1}/12] Running {name}...")
         try:
             r = fn(**kwargs)
             results[name] = r
@@ -277,7 +280,40 @@ def cmd_acquire_part_a(args: argparse.Namespace) -> None:  # noqa: C901 — inte
         media_kwargs["pull_media"] = args.pull_media
     _run("media", acquire_media, **media_kwargs)
 
-    # 9. Collector import (optional) -----------------------------------
+    # 9. Call logs -----------------------------------------------------
+    _run(
+        "call_logs",
+        acquire_call_logs,
+        adb=client,
+        case_folder=case_folder,
+        manifest=manifest,
+        audit=audit,
+        collector_folder=args.collector_export_folder,
+    )
+
+    # 10. SMS Messages -------------------------------------------------
+    _run(
+        "sms",
+        acquire_sms,
+        adb=client,
+        case_folder=case_folder,
+        manifest=manifest,
+        audit=audit,
+        collector_folder=args.collector_export_folder,
+    )
+
+    # 11. Contacts -----------------------------------------------------
+    _run(
+        "contacts",
+        acquire_contacts,
+        adb=client,
+        case_folder=case_folder,
+        manifest=manifest,
+        audit=audit,
+        collector_folder=args.collector_export_folder,
+    )
+
+    # 12. Collector import (optional) ----------------------------------
     collector_kwargs: dict[str, Any] = {
         "collector_folder": args.collector_export_folder,
         "case_folder": case_folder,
@@ -304,6 +340,9 @@ def cmd_acquire_part_a(args: argparse.Namespace) -> None:  # noqa: C901 — inte
     sl = results.get("system_logs") or {}
     nw = results.get("network") or {}
     md = results.get("media") or {}
+    cl = results.get("call_logs") or {}
+    sm = results.get("sms") or {}
+    co = results.get("contacts") or {}
 
     overall = "SUCCESS" if not errors else "COMPLETED_WITH_ERRORS"
 
@@ -317,6 +356,9 @@ def cmd_acquire_part_a(args: argparse.Namespace) -> None:  # noqa: C901 — inte
     print(f"  Security patch    : {_safe_get(di, 'software_summary', 'security_patch')}")
     print(f"  Installed apps    : {_safe_get(ia, 'app_count', default='0')}")
     print(f"  Account/email leads: {_safe_get(ac, 'account_count', default='0')} accounts / {_safe_get(ac, 'email_count', default='0')} emails")
+    print(f"  Call logs         : {_safe_get(cl, 'call_count', default='0')} (source: {_safe_get(cl, 'source', default='none')})")
+    print(f"  SMS messages      : {_safe_get(sm, 'message_count', default='0')} (source: {_safe_get(sm, 'source', default='none')})")
+    print(f"  Contacts          : {_safe_get(co, 'contact_count', default='0')} (source: {_safe_get(co, 'source', default='none')})")
     print(f"  Timeline events   : {_safe_get(tl, 'timeline_event_count', default='0')}")
     print(f"  Log events        : {_safe_get(sl, 'event_count', default='0')}")
     print(f"  Network status    : {_safe_get(nw, 'status', default='N/A')}")

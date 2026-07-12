@@ -227,7 +227,7 @@ python -m erakshak.cli preflight `
 
 ### Step 2: Full Acquisition
 
-Run the complete Phase 1 Part A acquisition pipeline (9 sequential stages):
+Run the complete Phase 1 Part A acquisition pipeline (12 sequential stages):
 
 ```bash
 # Linux / macOS
@@ -254,17 +254,21 @@ python -m erakshak.cli acquire-part-a `
   Android Rapid Evidence Triage & Forensic Preview Tool
 ----------------------------------------------------------------
 [*] Acquisition Part-A - Case: CASE001  Exhibit: EXHIBIT001
+[*] Started at 2026-07-12T06:00:47.609447+00:00
 [AUTO] Selected device: RZCW21D538L
 
-[1/9] Running preflight...       [OK]
-[2/9] Running device_info...     [OK]
-[3/9] Running installed_apps...  [OK]
-[4/9] Running accounts...        [OK]
-[5/9] Running timeline...        [OK]
-[6/9] Running system_logs...     [OK]
-[7/9] Running network...         [OK]
-[8/9] Running media...           [OK]
-[9/9] Running collector_import.. [OK]
+[1/12] Running preflight...       [OK]
+[2/12] Running device_info...     [OK]
+[3/12] Running installed_apps...  [OK]
+[4/12] Running accounts...        [OK]
+[5/12] Running timeline...        [OK]
+[6/12] Running system_logs...     [OK]
+[7/12] Running network...         [OK]
+[8/12] Running media...           [OK]
+[9/12] Running call_logs...       [OK]
+[10/12] Running sms...            [OK]
+[11/12] Running contacts...       [OK]
+[12/12] Running collector_import.. [OK]
 
 ================================================================
   E-RAKSHAK - ACQUISITION PART-A FINAL SUMMARY
@@ -272,16 +276,20 @@ python -m erakshak.cli acquire-part-a `
   Device model      : SM-E236B
   Android version   : 13
   Security patch    : 2023-11-01
-  Installed apps    : 580
+  Installed apps    : 581
   Account/email leads: 28 accounts / 6 emails
-  Timeline events   : 8391
-  Log events        : 36978
-  Media inventoried : 35418
-  Elapsed time      : 97.2s
+  Call logs         : 2000 (source: adb)
+  SMS messages      : 2779 (source: adb)
+  Contacts          : 465 (source: adb)
+  Timeline events   : 12911
+  Log events        : 39474
+  Network status    : acquired
+  Media inventoried : 35622
+  Media pulled      : 0
+  Elapsed time      : 125.2s
   Overall status    : SUCCESS
 ================================================================
 ```
-
 ---
 
 ### Step 3: Verify Integrity
@@ -337,8 +345,7 @@ python -m erakshak.cli acquire-part-a \
     --case CASE001 --exhibit EXHIBIT001 --serial auto --output cases \
     --collector-export-folder /path/to/collector/exports
 ```
-
-Expected files in the export folder: `calls.jsonl`, `sms.jsonl`, `mms.jsonl`, `media_index.jsonl`
+Expected files in the export folder: `calls.jsonl`, `sms.jsonl`, `mms.jsonl`, `contacts.jsonl`, `media_index.jsonl`
 
 ---
 
@@ -351,16 +358,18 @@ python -m pytest tests/ -v
 
 **Expected:**
 ```
-collected 17 items
+collected 23 items
 
-tests/test_hashing.py .....    [ 29%]
-tests/test_manifest.py ..      [ 41%]
-tests/test_parsers.py ..........  [100%]
+tests/test_extensions.py .....                                           [ 21%]
+tests/test_hashing.py .....                                              [ 43%]
+tests/test_manifest.py ..                                                [ 52%]
+tests/test_parsers.py ...........                                        [100%]
 
-17 passed in 0.28s
+23 passed in 0.81s
 ```
 
 ---
+
 
 ## Output Folder Structure
 
@@ -392,6 +401,9 @@ cases/
         │   │   ├── dumpsys_connectivity.txt
         │   │   ├── dumpsys_telephony.txt
         │   │   ├── dumpsys_bluetooth.txt
+        │   │   ├── content_call_log.txt      ← Raw calls content query (if successful)
+        │   │   ├── content_sms.txt           ← Raw SMS content query (if successful)
+        │   │   ├── content_contacts.txt      ← Raw contacts content query (if successful)
         │   │   ├── logcat.txt                ← Full buffered logcat (40+ MB in testing)
         │   │   ├── ip_addr.txt
         │   │   ├── ip_route.txt
@@ -410,6 +422,9 @@ cases/
         │   ├── app_permission_summary.json   ← Apps with dangerous permissions flagged
         │   ├── accounts.jsonl
         │   ├── account_email_leads.jsonl
+        │   ├── call_logs.jsonl               ← Parsed call logs (ADB or collector source)
+        │   ├── sms_messages.jsonl            ← Parsed SMS messages (ADB or collector source)
+        │   ├── contacts.jsonl                ← Parsed contacts list (ADB or collector source)
         │   ├── device_timeline_events.jsonl  ← Merged timeline from all sources
         │   ├── app_usage_summary.jsonl
         │   ├── logcat_events.jsonl           ← Classified forensic log events
@@ -437,7 +452,10 @@ cases/
 | **A9 System Logs** | `system_logs.py` | `shell logcat -d` | `logcat.txt`, `logcat_events.jsonl` |
 | **A10 Network** | `network.py` | `shell ip addr`, `shell ip route`, `shell netstat`, `shell dumpsys wifi`, `shell dumpsys connectivity`, `shell dumpsys telephony.registry` | `network_summary.json`, `network_connections.jsonl` |
 | **A11 Media** | `media.py` | `shell ls -la` (6 target dirs), `pull` (if enabled) | `media_index.jsonl`, optional pulled files |
-| **A12 Collector** | `collector_import.py` | Host-side only | Copies JSONL files from export folder |
+| **A12 Call Logs** | `call_logs.py` | `shell content query --uri content://call_log/calls` | `content_call_log.txt`, `call_logs.jsonl` |
+| **A13 SMS Messages** | `sms.py` | `shell content query --uri content://sms` | `content_sms.txt`, `sms_messages.jsonl` |
+| **A14 Contacts** | `contacts.py` | `shell content query --uri content://com.android.contacts/contacts` | `content_contacts.txt`, `contacts.jsonl` |
+| **A15 Collector** | `collector_import.py` | Host-side only | Copies JSONL files from export folder |
 
 ---
 
