@@ -10,6 +10,9 @@ manifest/
 cases/
 backend/cases/
 **/cases/
+*.db.crypt*
+msgstore.db.crypt*
+
 **/*.jsonl
 **/*.txt
 **/*.json

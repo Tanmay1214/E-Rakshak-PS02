@@ -1,0 +1,331 @@
+"""WhatsApp Part B Decryption Pipeline Orchestrator for E-RAKSHAK.
+
+Manages folder structures, file copies, key capture delegation, key metadata
+recording, wadecrypt subprocess execution, and manifest/audit trails.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from erakshak.case.hashing import hash_file
+from erakshak.part_b.whatsapp_key_capture import capture_whatsapp_backup_key
+from erakshak.part_b.whatsapp_decrypt import (
+    validate_hex_key,
+    key_metadata,
+    is_sqlite_database,
+    decrypt_with_wadecrypt,
+)
+
+
+def append_manifest_record(manifest_path: Path, record: dict[str, Any]) -> None:
+    """Appends a single JSONL record to the acquisition manifest."""
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(manifest_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def append_audit_event(
+    audit_path: Path,
+    case_id: str,
+    exhibit_id: str,
+    action: str,
+    result: str,
+    details: dict[str, Any] | None = None,
+) -> None:
+    """Appends a forensic audit event to the audit trail log."""
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    event = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "case_id": case_id,
+        "exhibit_id": exhibit_id,
+        "action": action,
+        "result": result,
+        "details": details or {},
+    }
+    with open(audit_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+
+def append_sha256sum(sha256sums_path: Path, sha256: str, target_path: Path) -> None:
+    """Appends the file hash and path to sha256sums.txt in coreutils format."""
+    sha256sums_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(sha256sums_path, "a", encoding="utf-8") as f:
+        f.write(f"{sha256}  {target_path}\n")
+
+
+def run_whatsapp_key_capture_and_decrypt(
+    case_id: str,
+    exhibit_id: str,
+    encrypted_backup_path: Path,
+    output_root: Path,
+    timeout_seconds: int = 300,
+    adb_path: str = "adb",
+    serial: str | None = None,
+    hex_key_manual: str | None = None,
+) -> dict[str, Any]:
+    """Orchestrates WhatsApp backup copy, key acquisition, metadata log, and decryption."""
+    # 1. Setup paths
+    exhibit_path = output_root / case_id / exhibit_id
+    raw_enc_dir = exhibit_path / "raw" / "apps" / "whatsapp" / "encrypted"
+    processed_dec_dir = exhibit_path / "processed" / "apps" / "whatsapp" / "decrypted"
+    acquisition_dir = exhibit_path / "acquisition"
+    hashes_dir = exhibit_path / "hashes"
+
+    # Create directories
+    raw_enc_dir.mkdir(parents=True, exist_ok=True)
+    processed_dec_dir.mkdir(parents=True, exist_ok=True)
+    acquisition_dir.mkdir(parents=True, exist_ok=True)
+    hashes_dir.mkdir(parents=True, exist_ok=True)
+
+    audit_path = acquisition_dir / "audit.jsonl"
+    manifest_path = acquisition_dir / "acquisition_manifest.jsonl"
+    sha256sums_path = hashes_dir / "sha256sums.txt"
+
+    # Initialize results
+    pipeline_res: dict[str, Any] = {
+        "status": "failed",
+        "encrypted_backup_path": "",
+        "decrypted_db_path": "",
+        "encrypted_sha256": "",
+        "decrypted_sha256": "",
+        "sqlite_verified": False,
+        "key_metadata": {},
+        "error": None,
+    }
+
+    # Start Pipeline Audit
+    append_audit_event(
+        audit_path, case_id, exhibit_id,
+        "whatsapp_decryption_pipeline_started", "success"
+    )
+
+    # 2. Verify and Copy Encrypted Backup
+    encrypted_backup_path = Path(encrypted_backup_path)
+    if not encrypted_backup_path.exists():
+        err_msg = f"Backup file not found: {encrypted_backup_path}"
+        append_audit_event(
+            audit_path, case_id, exhibit_id,
+            "whatsapp_backup_decryption_failed", "failed",
+            {"error": err_msg}
+        )
+        pipeline_res["error"] = err_msg
+        return pipeline_res
+
+    dest_backup = raw_enc_dir / encrypted_backup_path.name
+    try:
+        shutil.copy2(encrypted_backup_path, dest_backup)
+        append_audit_event(
+            audit_path, case_id, exhibit_id,
+            "encrypted_backup_copied", "success"
+        )
+    except Exception as e:
+        err_msg = f"Failed to copy backup file: {str(e)}"
+        append_audit_event(
+            audit_path, case_id, exhibit_id,
+            "whatsapp_backup_decryption_failed", "failed",
+            {"error": err_msg}
+        )
+        pipeline_res["error"] = err_msg
+        return pipeline_res
+
+    # 3. Hash Encrypted Backup
+    enc_sha = hash_file(dest_backup)
+    enc_size = dest_backup.stat().st_size
+    pipeline_res["encrypted_backup_path"] = str(dest_backup)
+    pipeline_res["encrypted_sha256"] = enc_sha
+    
+    append_sha256sum(sha256sums_path, enc_sha, dest_backup)
+
+    # 4. Key Acquisition
+    hex_key = None
+    source_type = "authorized_ui_capture"
+    
+    try:
+        if hex_key_manual:
+            print("[*] Using manually provided encryption key...")
+            hex_key = validate_hex_key(hex_key_manual)
+            source_type = "manual_input"
+        else:
+            print("[*] Initiating automated key capture from device...")
+            append_audit_event(
+                audit_path, case_id, exhibit_id,
+                "whatsapp_key_capture_started", "success"
+            )
+            hex_key = capture_whatsapp_backup_key(adb_path=adb_path, serial=serial)
+            
+            # Key capture completed successfully
+            meta = key_metadata(hex_key)
+            append_audit_event(
+                audit_path, case_id, exhibit_id,
+                "whatsapp_key_capture_completed", "success",
+                meta
+            )
+    except Exception as e:
+        err_msg = f"Key acquisition failed: {str(e)}"
+        print(f"[-] {err_msg}")
+        append_audit_event(
+            audit_path, case_id, exhibit_id,
+            "whatsapp_backup_decryption_failed", "failed",
+            {"error": err_msg}
+        )
+        pipeline_res["error"] = err_msg
+        
+        # Still record the encrypted backup and empty decryption manifest record
+        append_manifest_record(manifest_path, {
+            "case_id": case_id,
+            "exhibit_id": exhibit_id,
+            "artifact_class": "whatsapp_encrypted_backup",
+            "source_type": "operator_supplied_file",
+            "source_path": str(encrypted_backup_path),
+            "destination_path": str(dest_backup),
+            "sha256": enc_sha,
+            "size_bytes": enc_size,
+            "status": "acquired"
+        })
+        append_manifest_record(manifest_path, {
+            "case_id": case_id,
+            "exhibit_id": exhibit_id,
+            "artifact_class": "whatsapp_decrypted_msgstore",
+            "source_type": "wadecrypt",
+            "destination_path": "",
+            "sha256": "",
+            "size_bytes": 0,
+            "status": "failed",
+            "sqlite_verified": False
+        })
+        return pipeline_res
+
+    # 5. Save Key Metadata
+    meta = key_metadata(hex_key)
+    pipeline_res["key_metadata"] = meta
+    
+    meta_path = raw_enc_dir / "key_metadata.json"
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+        
+    meta_sha = hash_file(meta_path)
+    meta_size = meta_path.stat().st_size
+    append_sha256sum(sha256sums_path, meta_sha, meta_path)
+
+    # 6. Decrypt
+    output_db = processed_dec_dir / "msgstore.db"
+    
+    # Redacted command template for audit
+    command_redacted = f"wadecrypt <REDACTED_KEY> {dest_backup} {output_db}"
+    append_audit_event(
+        audit_path, case_id, exhibit_id,
+        "wadecrypt_invoked", "success",
+        {
+            "command_redacted": command_redacted,
+            "tool": "wadecrypt",
+            "tool_source": "wa-crypt-tools",
+        }
+    )
+
+    dec_res = decrypt_with_wadecrypt(hex_key, dest_backup, output_db, timeout_seconds)
+    
+    # Dereference key
+    hex_key = None
+    del hex_key
+
+    # 7. Check Decryption Outcome
+    if dec_res["status"] == "success":
+        dec_sha = hash_file(output_db)
+        dec_size = output_db.stat().st_size
+        
+        pipeline_res["status"] = "success"
+        pipeline_res["decrypted_db_path"] = str(output_db)
+        pipeline_res["decrypted_sha256"] = dec_sha
+        pipeline_res["sqlite_verified"] = True
+        
+        append_sha256sum(sha256sums_path, dec_sha, output_db)
+        
+        # Log completion
+        append_audit_event(
+            audit_path, case_id, exhibit_id,
+            "whatsapp_backup_decryption_completed", "success"
+        )
+        
+        # Manifest logs
+        append_manifest_record(manifest_path, {
+            "case_id": case_id,
+            "exhibit_id": exhibit_id,
+            "artifact_class": "whatsapp_encrypted_backup",
+            "source_type": "operator_supplied_file",
+            "source_path": str(encrypted_backup_path),
+            "destination_path": str(dest_backup),
+            "sha256": enc_sha,
+            "size_bytes": enc_size,
+            "status": "acquired"
+        })
+        append_manifest_record(manifest_path, {
+            "case_id": case_id,
+            "exhibit_id": exhibit_id,
+            "artifact_class": "whatsapp_key_metadata",
+            "source_type": source_type,
+            "destination_path": str(meta_path),
+            "sha256": meta_sha,
+            "size_bytes": meta_size,
+            "status": "metadata_recorded"
+        })
+        append_manifest_record(manifest_path, {
+            "case_id": case_id,
+            "exhibit_id": exhibit_id,
+            "artifact_class": "whatsapp_decrypted_msgstore",
+            "source_type": "wadecrypt",
+            "destination_path": str(output_db),
+            "sha256": dec_sha,
+            "size_bytes": dec_size,
+            "status": "decrypted",
+            "sqlite_verified": True
+        })
+    else:
+        err_msg = dec_res.get("error", "Decryption failed.")
+        pipeline_res["error"] = err_msg
+        
+        append_audit_event(
+            audit_path, case_id, exhibit_id,
+            "whatsapp_backup_decryption_failed", "failed",
+            {"error": err_msg}
+        )
+        
+        # Manifest logs for failure
+        append_manifest_record(manifest_path, {
+            "case_id": case_id,
+            "exhibit_id": exhibit_id,
+            "artifact_class": "whatsapp_encrypted_backup",
+            "source_type": "operator_supplied_file",
+            "source_path": str(encrypted_backup_path),
+            "destination_path": str(dest_backup),
+            "sha256": enc_sha,
+            "size_bytes": enc_size,
+            "status": "acquired"
+        })
+        append_manifest_record(manifest_path, {
+            "case_id": case_id,
+            "exhibit_id": exhibit_id,
+            "artifact_class": "whatsapp_key_metadata",
+            "source_type": source_type,
+            "destination_path": str(meta_path),
+            "sha256": meta_sha,
+            "size_bytes": meta_size,
+            "status": "metadata_recorded"
+        })
+        append_manifest_record(manifest_path, {
+            "case_id": case_id,
+            "exhibit_id": exhibit_id,
+            "artifact_class": "whatsapp_decrypted_msgstore",
+            "source_type": "wadecrypt",
+            "destination_path": "",
+            "sha256": "",
+            "size_bytes": 0,
+            "status": "failed",
+            "sqlite_verified": False
+        })
+
+    return pipeline_res

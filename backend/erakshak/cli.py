@@ -421,6 +421,75 @@ def cmd_verify(args: argparse.Namespace) -> None:
         sys.exit(0)
 
 
+def cmd_whatsapp_auto_decrypt(args: argparse.Namespace) -> None:
+    """Run WhatsApp automated key capture and decryption pipeline."""
+    print_banner()
+    print("[WARNING] This will run authorized WhatsApp UI automation on the connected phone.")
+    print("Ensure legal authority and keep the device unlocked.")
+    print("Key will be used in memory and will not be printed.")
+
+    from erakshak.part_b.whatsapp_pipeline import run_whatsapp_key_capture_and_decrypt
+
+    # Run pipeline
+    res = run_whatsapp_key_capture_and_decrypt(
+        case_id=args.case,
+        exhibit_id=args.exhibit,
+        encrypted_backup_path=Path(args.backup),
+        output_root=Path(args.output),
+        adb_path=args.adb_path,
+        serial=args.serial if args.serial != "auto" else None,
+    )
+
+    if res["status"] == "success":
+        print("\n" + "=" * 50)
+        print("  WhatsApp Decryption Successful")
+        print("=" * 50)
+        print(f"  Encrypted backup copied path: {res['encrypted_backup_path']}")
+        print(f"  Decrypted msgstore.db path  : {res['decrypted_db_path']}")
+        print(f"  SHA-256 of encrypted backup : {res['encrypted_sha256']}")
+        print(f"  SHA-256 of decrypted DB     : {res['decrypted_sha256']}")
+        print(f"  SQLite verification status  : {res['sqlite_verified']}")
+        print("=" * 50 + "\n")
+        sys.exit(0)
+    else:
+        err = res.get("error", "Decryption failed.")
+        print(f"\n[ERROR] WhatsApp Decryption Failed: {err}\n")
+        sys.exit(1)
+
+
+def cmd_whatsapp_decrypt(args: argparse.Namespace) -> None:
+    """Run WhatsApp decryption using a manually supplied hex key."""
+    print_banner()
+    print("Key will be used in memory and will not be printed.")
+
+    from erakshak.part_b.whatsapp_pipeline import run_whatsapp_key_capture_and_decrypt
+
+    # Run pipeline
+    res = run_whatsapp_key_capture_and_decrypt(
+        case_id=args.case,
+        exhibit_id=args.exhibit,
+        encrypted_backup_path=Path(args.backup),
+        output_root=Path(args.output),
+        hex_key_manual=args.hex_key,
+    )
+
+    if res["status"] == "success":
+        print("\n" + "=" * 50)
+        print("  WhatsApp Decryption Successful")
+        print("=" * 50)
+        print(f"  Encrypted backup copied path: {res['encrypted_backup_path']}")
+        print(f"  Decrypted msgstore.db path  : {res['decrypted_db_path']}")
+        print(f"  SHA-256 of encrypted backup : {res['encrypted_sha256']}")
+        print(f"  SHA-256 of decrypted DB     : {res['decrypted_sha256']}")
+        print(f"  SQLite verification status  : {res['sqlite_verified']}")
+        print("=" * 50 + "\n")
+        sys.exit(0)
+    else:
+        err = res.get("error", "Decryption failed.")
+        print(f"\n[ERROR] WhatsApp Decryption Failed: {err}\n")
+        sys.exit(1)
+
+
 # ═════════════════════════════════════════════════════════════════════
 # Argument parser
 # ═════════════════════════════════════════════════════════════════════
@@ -467,6 +536,25 @@ def build_parser() -> argparse.ArgumentParser:
     sp_ver.add_argument("--case-folder", required=True,
                         help="Path to the case/exhibit folder (e.g. cases/CASE001/EX001)")
     sp_ver.set_defaults(func=cmd_verify)
+
+    # ── whatsapp-auto-decrypt ─────────────────────────────────────────
+    sp_wa_auto = subparsers.add_parser("whatsapp-auto-decrypt", help="Automated key capture and decrypt WhatsApp backup")
+    sp_wa_auto.add_argument("--case", required=True, help="Case identifier")
+    sp_wa_auto.add_argument("--exhibit", required=True, help="Exhibit identifier")
+    sp_wa_auto.add_argument("--backup", required=True, help="Path to encrypted WhatsApp backup file")
+    sp_wa_auto.add_argument("--output", default="cases", help="Output root directory")
+    sp_wa_auto.add_argument("--serial", default="auto", help="ADB device serial or 'auto'")
+    sp_wa_auto.add_argument("--adb-path", default="adb", help="Path to ADB binary")
+    sp_wa_auto.set_defaults(func=cmd_whatsapp_auto_decrypt)
+
+    # ── whatsapp-decrypt ──────────────────────────────────────────────
+    sp_wa_dec = subparsers.add_parser("whatsapp-decrypt", help="Decrypt WhatsApp backup using manual key")
+    sp_wa_dec.add_argument("--case", required=True, help="Case identifier")
+    sp_wa_dec.add_argument("--exhibit", required=True, help="Exhibit identifier")
+    sp_wa_dec.add_argument("--backup", required=True, help="Path to encrypted WhatsApp backup file")
+    sp_wa_dec.add_argument("--hex-key", required=True, help="64-character WhatsApp backup encryption key")
+    sp_wa_dec.add_argument("--output", default="cases", help="Output root directory")
+    sp_wa_dec.set_defaults(func=cmd_whatsapp_decrypt)
 
     return parser
 

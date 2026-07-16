@@ -549,6 +549,33 @@ Part A does collect: installation status (version, permissions, install date) an
 
 ---
 
+## WhatsApp Part B Decryption
+
+E-RAKSHAK includes a Part B WhatsApp decryption pipeline that copy-stages encrypted backups and processes them using a captured or manually supplied 64-character hex key.
+
+### Prerequisites
+
+- **wa-crypt-tools**: Requires the `wa-crypt-tools` command-line utility to be installed on the host:
+  ```bash
+  pip install wa-crypt-tools
+  ```
+- **Encrypted Backup File**: Requires an encrypted WhatsApp backup database file, typically named `msgstore.db.crypt14` or `msgstore.db.crypt15`.
+
+### Decryption Key Modes
+
+The 64-character backup key can be acquired in two ways:
+1. **Automated Key Capture**: Automates standard WhatsApp settings UI navigation on a connected Android phone over ADB using XML layout tree scraping and clipboard fallbacks.
+2. **Manual Key Entry**: Explicitly provided by the forensic investigator via CLI argument.
+
+### Security and Forensic Compliance
+
+- **No Passcode/Security Bypass**: The automated capture requires the device to be unlocked and USB debugging authorized.
+- **No Stealth/Exploitation**: The navigation sequence runs visibly on screen; no backdoors or privilege escalations are performed.
+- **Strict Key Protection**: Raw key secrets are processed in-memory only and are strictly redacted from stdout, stderr, manifest lists, audit events, and CLI output.
+- **Verification & Staging**: staging puts encrypted backup in `raw/` and records safe key metadata (`key_sha256`), then decrypts to `processed/apps/whatsapp/decrypted/msgstore.db`. Plaintext msgstore.db can be safely indexed or processed using forensic databases like `chat4n6`.
+
+---
+
 ## Legal & Ethical Notice
 
 > [!IMPORTANT]
