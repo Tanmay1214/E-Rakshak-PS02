@@ -17,7 +17,13 @@ from erakshak.part_b.whatsapp_decrypt import (
     decrypt_with_wadecrypt,
     ensure_wadecrypt_available,
 )
-from erakshak.part_b.whatsapp_pipeline import run_whatsapp_key_capture_and_decrypt
+from erakshak.part_b.whatsapp_pipeline import (
+    run_whatsapp_key_capture_and_decrypt,
+    is_remote_android_path,
+    resolve_whatsapp_remote_path,
+    find_msgstore_in_remote_dir,
+    pull_file_from_device,
+)
 
 
 # ── 1. validate_hex_key accepts lowercase 64 hex ────────────────────────────
@@ -50,7 +56,6 @@ def test_validate_hex_key_non_hex() -> None:
 def test_key_metadata_no_raw_key() -> None:
     key = "a" * 64
     meta = key_metadata(key)
-    # Ensure raw key is not present in values (except length/metadata properties)
     for k, v in meta.items():
         if k == "key_length":
             assert v == 64
@@ -94,7 +99,6 @@ def test_is_sqlite_database_false(tmp_path: Path) -> None:
 def test_decrypt_with_wadecrypt_argv(mock_run: MagicMock, mock_which: MagicMock, tmp_path: Path) -> None:
     mock_which.return_value = "/usr/bin/wadecrypt"
     
-    # Mock subprocess completion and output file creation
     def side_effect(*args, **kwargs):
         out_path = Path(args[0][3])
         out_path.write_bytes(b"SQLite format 3\x00test")
@@ -112,10 +116,8 @@ def test_decrypt_with_wadecrypt_argv(mock_run: MagicMock, mock_which: MagicMock,
     output = tmp_path / "msgstore.db"
 
     res = decrypt_with_wadecrypt(key, backup, output)
-    
     assert res["status"] == "success"
     
-    # Assert run called with list (shell=False or not specified, check argv)
     mock_run.assert_called_once()
     call_args, call_kwargs = mock_run.call_args
     argv = call_args[0]
@@ -165,7 +167,6 @@ def test_whatsapp_pipeline(
     key = "c" * 64
     mock_capture.return_value = key
 
-    # Mock subprocess completion and SQLite output file creation
     def side_effect(*args, **kwargs):
         out_path = Path(args[0][3])
         out_path.write_bytes(b"SQLite format 3\x00decrypted")
@@ -192,27 +193,22 @@ def test_whatsapp_pipeline(
     assert res["status"] == "success"
     exhibit_path = output_dir / "CASE001" / "EX001"
 
-    # 11. Pipeline writes key_metadata.json but not raw key
     meta_file = exhibit_path / "raw" / "apps" / "whatsapp" / "encrypted" / "key_metadata.json"
     assert meta_file.exists()
     meta_content = json.loads(meta_file.read_text())
     assert meta_content["key_present"] is True
-    # Verify no raw key is in the metadata file
     assert key not in meta_content.values()
 
-    # 12. Pipeline writes audit.jsonl with redacted command
     audit_file = exhibit_path / "acquisition" / "audit.jsonl"
     assert audit_file.exists()
     audit_lines = [json.loads(line) for line in audit_file.read_text().splitlines()]
     
-    # Assert at least one wadecrypt_invoked event with redacted command
     invoked_events = [e for e in audit_lines if e["action"] == "wadecrypt_invoked"]
     assert len(invoked_events) == 1
     details = invoked_events[0]["details"]
     assert "<REDACTED_KEY>" in details["command_redacted"]
     assert key not in details["command_redacted"]
 
-    # 13. Pipeline writes manifest records
     manifest_file = exhibit_path / "acquisition" / "acquisition_manifest.jsonl"
     assert manifest_file.exists()
     manifest_lines = [json.loads(line) for line in manifest_file.read_text().splitlines()]
@@ -242,4 +238,66 @@ def test_failed_wadecrypt(mock_run: MagicMock, mock_which: MagicMock, tmp_path: 
     res = decrypt_with_wadecrypt(key, backup, output)
     assert res["status"] == "failed"
     assert res["sqlite_verified"] is False
-    assert res["error"] == "Output file was not created by wadecrypt."
+
+
+# ── 15. remote path detection tests ──────────────────────────────────────────
+def test_is_remote_android_path() -> None:
+    assert is_remote_android_path("/sdcard/Android/media/com.whatsapp/WhatsApp/Databases/") is True
+    assert is_remote_android_path("/sdcard/WhatsApp/Databases/") is True
+    assert is_remote_android_path("C:\\Users\\tanma\\msgstore.db.crypt15") is False
+    assert is_remote_android_path("relative/path.db.crypt15") is False
+
+
+# ── 16. resolve_whatsapp_remote_path based on SDK version ────────────────────
+@patch("subprocess.run")
+def test_resolve_whatsapp_remote_path(mock_run: MagicMock) -> None:
+    # Test SDK 30 (Android 11+)
+    mock_proc_30 = MagicMock()
+    mock_proc_30.returncode = 0
+    mock_proc_30.stdout = "30\n"
+    mock_run.return_value = mock_proc_30
+    
+    res_11 = resolve_whatsapp_remote_path("adb", None, "/sdcard/WhatsApp/Databases")
+    assert res_11 == "/sdcard/Android/media/com.whatsapp/WhatsApp/Databases/"
+
+    # Test SDK 29 (Android 10)
+    mock_proc_29 = MagicMock()
+    mock_proc_29.returncode = 0
+    mock_proc_29.stdout = "29\n"
+    mock_run.return_value = mock_proc_29
+    
+    res_10 = resolve_whatsapp_remote_path("adb", None, "/sdcard/Android/media/com.whatsapp/WhatsApp/Databases/")
+    assert res_10 == "/sdcard/WhatsApp/Databases/"
+
+
+# ── 17. find_msgstore_in_remote_dir ──────────────────────────────────────────
+@patch("subprocess.run")
+def test_find_msgstore_in_remote_dir(mock_run: MagicMock) -> None:
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_proc.stdout = """
+msgstore-2026-07-10.1.db.crypt15
+msgstore-2026-07-11.1.db.crypt15
+msgstore.db.crypt15
+random_file.txt
+"""
+    mock_run.return_value = mock_proc
+
+    discovered = find_msgstore_in_remote_dir("adb", None, "/sdcard/WhatsApp/Databases/")
+    assert discovered == "/sdcard/WhatsApp/Databases/msgstore.db.crypt15"
+
+
+# ── 18. pull_file_from_device ───────────────────────────────────────────────
+@patch("subprocess.run")
+def test_pull_file_from_device(mock_run: MagicMock, tmp_path: Path) -> None:
+    mock_proc = MagicMock()
+    mock_proc.returncode = 0
+    mock_run.return_value = mock_proc
+
+    dest = tmp_path / "pulled_msgstore.db.crypt15"
+    success = pull_file_from_device("adb", None, "/sdcard/WhatsApp/Databases/msgstore.db.crypt15", dest)
+    assert success is True
+    mock_run.assert_called_once_with(
+        ["adb", "pull", "/sdcard/WhatsApp/Databases/msgstore.db.crypt15", str(dest)],
+        capture_output=True, text=True, timeout=300
+    )

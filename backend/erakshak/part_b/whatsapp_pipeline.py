@@ -1,13 +1,15 @@
 """WhatsApp Part B Decryption Pipeline Orchestrator for E-RAKSHAK.
 
-Manages folder structures, file copies, key capture delegation, key metadata
-recording, wadecrypt subprocess execution, and manifest/audit trails.
+Manages folder structures, file copies/adb pulls, key acquisition delegation,
+key metadata recording, wadecrypt subprocess execution, and manifest/audit trails.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -58,6 +60,109 @@ def append_sha256sum(sha256sums_path: Path, sha256: str, target_path: Path) -> N
         f.write(f"{sha256}  {target_path}\n")
 
 
+def is_remote_android_path(path_str: str) -> bool:
+    """Checks if the path is a remote Android path (e.g. starts with /sdcard or /data)."""
+    normalized = path_str.replace("\\", "/")
+    if normalized.startswith(("/sdcard", "/data", "/storage", "sdcard/", "data/", "storage/")):
+        return True
+    if normalized.startswith("/") and not Path(path_str).exists():
+        return True
+    return False
+
+
+def get_android_sdk(adb_path: str, serial: str | None) -> int:
+    """Queries the connected Android device for its SDK API level."""
+    adb_cmd = [adb_path]
+    if serial:
+        adb_cmd += ["-s", serial]
+    adb_cmd += ["shell", "getprop", "ro.build.version.sdk"]
+    try:
+        res = subprocess.run(adb_cmd, capture_output=True, text=True, timeout=10)
+        if res.returncode == 0:
+            return int(res.stdout.strip())
+    except Exception:
+        pass
+    return 30  # Default to SDK 30 (Android 11) if query fails
+
+
+def resolve_whatsapp_remote_path(adb_path: str, serial: str | None, path_str: str) -> str:
+    """Resolves correct remote path based on Android SDK version.
+
+    For Android 11+ (SDK >= 30), standard database directory is:
+        /sdcard/Android/media/com.whatsapp/WhatsApp/Databases/
+    For Android 10 and below (SDK < 30), it is:
+        /sdcard/WhatsApp/Databases/
+    """
+    sdk = get_android_sdk(adb_path, serial)
+    normalized = path_str.replace("\\", "/").rstrip("/")
+    
+    is_databases_dir = normalized in (
+        "/sdcard/Android/media/com.whatsapp/WhatsApp/Databases",
+        "/sdcard/WhatsApp/Databases",
+        "sdcard/Android/media/com.whatsapp/WhatsApp/Databases",
+        "sdcard/WhatsApp/Databases"
+    )
+
+    if is_databases_dir:
+        if sdk >= 30:  # Android 11+
+            return "/sdcard/Android/media/com.whatsapp/WhatsApp/Databases/"
+        else:          # Android 10 and below
+            return "/sdcard/WhatsApp/Databases/"
+            
+    return path_str
+
+
+def find_msgstore_in_remote_dir(adb_path: str, serial: str | None, remote_dir: str) -> str | None:
+    """Lists files in the remote directory and finds the active or latest msgstore database."""
+    adb_cmd = [adb_path]
+    if serial:
+        adb_cmd += ["-s", serial]
+    adb_cmd += ["shell", "ls", "-1", remote_dir]
+    try:
+        res = subprocess.run(adb_cmd, capture_output=True, text=True, timeout=15)
+        if res.returncode != 0:
+            return None
+        
+        files = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+        
+        # 1. Look for active backup database (msgstore.db.crypt15, msgstore.db.crypt14, etc.)
+        active_candidates = []
+        for f in files:
+            if f.startswith("msgstore.db.crypt"):
+                active_candidates.append(f)
+        
+        if active_candidates:
+            active_candidates.sort(reverse=True)  # Sort descending to get highest crypt extension
+            return remote_dir.rstrip("/") + "/" + active_candidates[0]
+            
+        # 2. Look for dated candidates (msgstore-YYYY-MM-DD.1.db.crypt15, etc.)
+        dated_candidates = []
+        for f in files:
+            if f.startswith("msgstore-") and ".db.crypt" in f:
+                dated_candidates.append(f)
+                
+        if dated_candidates:
+            dated_candidates.sort()  # Lexicographical sort puts latest date last
+            return remote_dir.rstrip("/") + "/" + dated_candidates[-1]
+            
+    except Exception:
+        pass
+    return None
+
+
+def pull_file_from_device(adb_path: str, serial: str | None, remote_path: str, local_dest: Path) -> bool:
+    """Pulls a remote file from the Android device to a local destination."""
+    adb_cmd = [adb_path]
+    if serial:
+        adb_cmd += ["-s", serial]
+    adb_cmd += ["pull", remote_path, str(local_dest)]
+    try:
+        res = subprocess.run(adb_cmd, capture_output=True, text=True, timeout=300)
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
 def run_whatsapp_key_capture_and_decrypt(
     case_id: str,
     exhibit_id: str,
@@ -68,7 +173,7 @@ def run_whatsapp_key_capture_and_decrypt(
     serial: str | None = None,
     hex_key_manual: str | None = None,
 ) -> dict[str, Any]:
-    """Orchestrates WhatsApp backup copy, key acquisition, metadata log, and decryption."""
+    """Orchestrates WhatsApp backup copy/pull, key acquisition, metadata log, and decryption."""
     # 1. Setup paths
     exhibit_path = output_root / case_id / exhibit_id
     raw_enc_dir = exhibit_path / "raw" / "apps" / "whatsapp" / "encrypted"
@@ -104,34 +209,85 @@ def run_whatsapp_key_capture_and_decrypt(
         "whatsapp_decryption_pipeline_started", "success"
     )
 
-    # 2. Verify and Copy Encrypted Backup
-    encrypted_backup_path = Path(encrypted_backup_path)
-    if not encrypted_backup_path.exists():
-        err_msg = f"Backup file not found: {encrypted_backup_path}"
-        append_audit_event(
-            audit_path, case_id, exhibit_id,
-            "whatsapp_backup_decryption_failed", "failed",
-            {"error": err_msg}
-        )
-        pipeline_res["error"] = err_msg
-        return pipeline_res
+    # 2. Verify and Copy/Pull Encrypted Backup
+    backup_str = str(encrypted_backup_path)
+    is_remote = is_remote_android_path(backup_str)
+    
+    dest_backup = None
+    source_type = "operator_supplied_file"
+    source_path_val = backup_str
 
-    dest_backup = raw_enc_dir / encrypted_backup_path.name
-    try:
-        shutil.copy2(encrypted_backup_path, dest_backup)
+    if is_remote:
+        # Resolve target path based on Android version
+        resolved_remote_dir = resolve_whatsapp_remote_path(adb_path, serial, backup_str)
+        print(f"[*] Resolved remote path: {resolved_remote_dir}")
+        
+        # Check if resolved path is a directory (does not end with crypt extension)
+        remote_file_path = resolved_remote_dir
+        if not re.search(r"\.crypt\d+$", resolved_remote_dir.lower()):
+            print(f"[*] Path is a remote directory. Searching for databases in {resolved_remote_dir}...")
+            discovered_path = find_msgstore_in_remote_dir(adb_path, serial, resolved_remote_dir)
+            if not discovered_path:
+                err_msg = f"No WhatsApp backup database found in remote directory: {resolved_remote_dir}"
+                append_audit_event(
+                    audit_path, case_id, exhibit_id,
+                    "whatsapp_backup_decryption_failed", "failed",
+                    {"error": err_msg}
+                )
+                pipeline_res["error"] = err_msg
+                return pipeline_res
+            remote_file_path = discovered_path
+            print(f"[+] Discovered backup on device: {remote_file_path}")
+            
+        dest_backup = raw_enc_dir / Path(remote_file_path).name
+        source_path_val = remote_file_path
+        
+        print(f"[*] Pulling remote backup {remote_file_path} from device...")
+        success = pull_file_from_device(adb_path, serial, remote_file_path, dest_backup)
+        if not success:
+            err_msg = f"Failed to pull WhatsApp backup from device: {remote_file_path}"
+            append_audit_event(
+                audit_path, case_id, exhibit_id,
+                "whatsapp_backup_decryption_failed", "failed",
+                {"error": err_msg}
+            )
+            pipeline_res["error"] = err_msg
+            return pipeline_res
+            
+        source_type = "adb_pull"
         append_audit_event(
             audit_path, case_id, exhibit_id,
-            "encrypted_backup_copied", "success"
+            "encrypted_backup_pulled", "success",
+            {"remote_path": remote_file_path, "local_path": str(dest_backup)}
         )
-    except Exception as e:
-        err_msg = f"Failed to copy backup file: {str(e)}"
-        append_audit_event(
-            audit_path, case_id, exhibit_id,
-            "whatsapp_backup_decryption_failed", "failed",
-            {"error": err_msg}
-        )
-        pipeline_res["error"] = err_msg
-        return pipeline_res
+    else:
+        encrypted_backup_path = Path(encrypted_backup_path)
+        if not encrypted_backup_path.exists():
+            err_msg = f"Backup file not found: {encrypted_backup_path}"
+            append_audit_event(
+                audit_path, case_id, exhibit_id,
+                "whatsapp_backup_decryption_failed", "failed",
+                {"error": err_msg}
+            )
+            pipeline_res["error"] = err_msg
+            return pipeline_res
+
+        dest_backup = raw_enc_dir / encrypted_backup_path.name
+        try:
+            shutil.copy2(encrypted_backup_path, dest_backup)
+            append_audit_event(
+                audit_path, case_id, exhibit_id,
+                "encrypted_backup_copied", "success"
+            )
+        except Exception as e:
+            err_msg = f"Failed to copy backup file: {str(e)}"
+            append_audit_event(
+                audit_path, case_id, exhibit_id,
+                "whatsapp_backup_decryption_failed", "failed",
+                {"error": err_msg}
+            )
+            pipeline_res["error"] = err_msg
+            return pipeline_res
 
     # 3. Hash Encrypted Backup
     enc_sha = hash_file(dest_backup)
@@ -143,13 +299,13 @@ def run_whatsapp_key_capture_and_decrypt(
 
     # 4. Key Acquisition
     hex_key = None
-    source_type = "authorized_ui_capture"
+    key_source_type = "authorized_ui_capture"
     
     try:
         if hex_key_manual:
             print("[*] Using manually provided encryption key...")
             hex_key = validate_hex_key(hex_key_manual)
-            source_type = "manual_input"
+            key_source_type = "manual_input"
         else:
             print("[*] Initiating automated key capture from device...")
             append_audit_event(
@@ -158,7 +314,6 @@ def run_whatsapp_key_capture_and_decrypt(
             )
             hex_key = capture_whatsapp_backup_key(adb_path=adb_path, serial=serial)
             
-            # Key capture completed successfully
             meta = key_metadata(hex_key)
             append_audit_event(
                 audit_path, case_id, exhibit_id,
@@ -175,13 +330,13 @@ def run_whatsapp_key_capture_and_decrypt(
         )
         pipeline_res["error"] = err_msg
         
-        # Still record the encrypted backup and empty decryption manifest record
+        # Manifest record for failure
         append_manifest_record(manifest_path, {
             "case_id": case_id,
             "exhibit_id": exhibit_id,
             "artifact_class": "whatsapp_encrypted_backup",
-            "source_type": "operator_supplied_file",
-            "source_path": str(encrypted_backup_path),
+            "source_type": source_type,
+            "source_path": source_path_val,
             "destination_path": str(dest_backup),
             "sha256": enc_sha,
             "size_bytes": enc_size,
@@ -215,7 +370,6 @@ def run_whatsapp_key_capture_and_decrypt(
     # 6. Decrypt
     output_db = processed_dec_dir / "msgstore.db"
     
-    # Redacted command template for audit
     command_redacted = f"wadecrypt <REDACTED_KEY> {dest_backup} {output_db}"
     append_audit_event(
         audit_path, case_id, exhibit_id,
@@ -245,19 +399,17 @@ def run_whatsapp_key_capture_and_decrypt(
         
         append_sha256sum(sha256sums_path, dec_sha, output_db)
         
-        # Log completion
         append_audit_event(
             audit_path, case_id, exhibit_id,
             "whatsapp_backup_decryption_completed", "success"
         )
         
-        # Manifest logs
         append_manifest_record(manifest_path, {
             "case_id": case_id,
             "exhibit_id": exhibit_id,
             "artifact_class": "whatsapp_encrypted_backup",
-            "source_type": "operator_supplied_file",
-            "source_path": str(encrypted_backup_path),
+            "source_type": source_type,
+            "source_path": source_path_val,
             "destination_path": str(dest_backup),
             "sha256": enc_sha,
             "size_bytes": enc_size,
@@ -267,7 +419,7 @@ def run_whatsapp_key_capture_and_decrypt(
             "case_id": case_id,
             "exhibit_id": exhibit_id,
             "artifact_class": "whatsapp_key_metadata",
-            "source_type": source_type,
+            "source_type": key_source_type,
             "destination_path": str(meta_path),
             "sha256": meta_sha,
             "size_bytes": meta_size,
@@ -294,13 +446,12 @@ def run_whatsapp_key_capture_and_decrypt(
             {"error": err_msg}
         )
         
-        # Manifest logs for failure
         append_manifest_record(manifest_path, {
             "case_id": case_id,
             "exhibit_id": exhibit_id,
             "artifact_class": "whatsapp_encrypted_backup",
-            "source_type": "operator_supplied_file",
-            "source_path": str(encrypted_backup_path),
+            "source_type": source_type,
+            "source_path": source_path_val,
             "destination_path": str(dest_backup),
             "sha256": enc_sha,
             "size_bytes": enc_size,
@@ -310,7 +461,7 @@ def run_whatsapp_key_capture_and_decrypt(
             "case_id": case_id,
             "exhibit_id": exhibit_id,
             "artifact_class": "whatsapp_key_metadata",
-            "source_type": source_type,
+            "source_type": key_source_type,
             "destination_path": str(meta_path),
             "sha256": meta_sha,
             "size_bytes": meta_size,

@@ -51,16 +51,26 @@ def check_device() -> None:
     print("[+] Android device connected!")
 
 
+def get_screen_size() -> tuple[int, int]:
+    """Retrieves screen size width and height from the device."""
+    size = run_adb("shell wm size")
+    w, h = 1080, 1920
+    if size:
+        match = re.search(r'(\d+)x(\d+)', size)
+        if match:
+            w, h = int(match.group(1)), int(match.group(2))
+    return w, h
+
+
 def dump_ui() -> str | None:
     """BULLETPROOF UI DUMP: Uses --compressed and checks for success string."""
-    for attempt in range(5):
+    for attempt in range(3):
         # Delete old file first
         run_adb("shell rm /sdcard/ui_dump.xml")
         
         # --compressed bypasses animation locks
         res = run_adb("shell uiautomator dump --compressed /sdcard/ui_dump.xml")
         
-        # Android prints this string ONLY if the dump succeeded
         if res and "dumped to" in res:
             run_adb("pull /sdcard/ui_dump.xml ui_dump.xml")
             try:
@@ -72,8 +82,7 @@ def dump_ui() -> str | None:
                         return xml_content
             except Exception:
                 pass
-        # If it failed, wait 1.5 seconds for animation to finish and try again
-        time.sleep(1.5)
+        time.sleep(1)
     return None
 
 
@@ -142,12 +151,7 @@ def scrape_via_clipboard() -> str | None:
     """Clipboard method: Long press -> Copy -> Read Clipboard."""
     print("\n[*] XML Parse failed. Falling back to Clipboard Method...")
     
-    size = run_adb("shell wm size")
-    w, h = 1080, 1920
-    if size:
-        match = re.search(r'(\d+)x(\d+)', size)
-        if match:
-            w, h = int(match.group(1)), int(match.group(2))
+    w, h = get_screen_size()
     
     print("  -> Long pressing key area...")
     x, y = int(w * 0.5), int(h * 0.45)
@@ -173,11 +177,13 @@ def scrape_via_clipboard() -> str | None:
 
 
 def automate_whatsapp_ui() -> str | None:
-    """Core WhatsApp UI automation flow. Key printing removed for forensic security."""
+    """Core WhatsApp UI automation flow. Uses robust coordinate fallback when XML dumps fail."""
     print("\n" + "="*50)
-    print("🤖 INITIATING ROBUST UI AUTOMATION 🤖")
+    print("[!] INITIATING ROBUST UI AUTOMATION [!]")
     print("DO NOT TOUCH THE PHONE. The script is controlling it.")
     print("="*50 + "\n")
+    
+    w, h = get_screen_size()
     
     # 1. Open WhatsApp
     print("[*] Opening WhatsApp...")
@@ -188,15 +194,8 @@ def automate_whatsapp_ui() -> str | None:
     print("[*] Opening Main Menu...")
     xml = dump_ui()
     if not find_and_tap(xml, "More options"):
-        # Fallback coordinate if XML dump has issues
-        w, h = 1080, 1920
-        size = run_adb("shell wm size")
-        if size:
-            match = re.search(r'(\d+)x(\d+)', size)
-            if match:
-                w, h = int(match.group(1)), int(match.group(2))
-        tap_x = int(w * 0.9)
-        tap_y = int(h * 0.08)
+        tap_x = int(w * 0.93)
+        tap_y = int(h * 0.07)
         run_adb(f"shell input tap {tap_x} {tap_y}")
         time.sleep(3)
     
@@ -204,54 +203,67 @@ def automate_whatsapp_ui() -> str | None:
     print("[*] Tapping Settings...")
     xml = dump_ui()
     if not find_and_tap(xml, "Settings"):
-        swipe_up()
-        xml = dump_ui()
-        find_and_tap(xml, "Settings")
+        tap_x = int(w * 0.75)
+        tap_y = int(h * 0.35)
+        run_adb(f"shell input tap {tap_x} {tap_y}")
+        time.sleep(3)
     
     # 4. Tap "Chats"
     print("[*] Tapping Chats...")
     xml = dump_ui()
     if not find_and_tap(xml, "Chats"):
-        swipe_up()
-        xml = dump_ui()
-        find_and_tap(xml, "Chats")
+        tap_x = int(w * 0.5)
+        tap_y = int(h * 0.52)
+        run_adb(f"shell input tap {tap_x} {tap_y}")
+        time.sleep(3)
     
     # 5. Tap "Chat Backup"
     print("[*] Tapping Chat Backup...")
     xml = dump_ui()
     if not find_and_tap(xml, "Chat backup"):
-        swipe_up()
-        xml = dump_ui()
-        find_and_tap(xml, "Chat backup")
+        tap_x = int(w * 0.5)
+        tap_y = int(h * 0.73)
+        run_adb(f"shell input tap {tap_x} {tap_y}")
+        time.sleep(3)
     
     # 6. Tap "End-to-End Encrypted Backup"
     print("[*] Tapping End-to-End Encrypted Backup...")
     xml = dump_ui()
     if not find_and_tap(xml, "End-to-end encrypted backup"):
-        swipe_up()
-        xml = dump_ui()
-        find_and_tap(xml, "End-to-end encrypted backup")
+        tap_x = int(w * 0.5)
+        tap_y = int(h * 0.58)
+        run_adb(f"shell input tap {tap_x} {tap_y}")
+        time.sleep(3)
     
-    # 7. Tap "More options" on the E2EE screen
+    # 7. Tap "More options" or "Change password" on the E2EE screen
     print("[*] Looking for 'More options' button on E2EE screen...")
     xml = dump_ui()
     if not find_and_tap(xml, "More options"):
-        find_and_tap(xml, "Change password")
+        if not find_and_tap(xml, "Change password"):
+            # Try tapping at coordinate fallback
+            tap_x = int(w * 0.5)
+            tap_y = int(h * 0.65)
+            run_adb(f"shell input tap {tap_x} {tap_y}")
+            time.sleep(3)
     
-    # 8. Tap "64 digit encryption key"
+    # 8. Tap "64-digit encryption key"
     print("[*] Selecting '64-digit encryption key' option...")
     xml = dump_ui()
     if not find_and_tap(xml, "64-digit encryption key"):
-        swipe_up()
-        xml = dump_ui()
-        find_and_tap(xml, "64-digit encryption key")
+        tap_x = int(w * 0.5)
+        tap_y = int(h * 0.65)
+        run_adb(f"shell input tap {tap_x} {tap_y}")
+        time.sleep(3)
     
     # 9. Tap "Generate" or "Create"
     print("[*] Looking for Generate/Create button...")
     xml = dump_ui()
     if not find_and_tap(xml, "Generate"):
-        xml = dump_ui()
-        find_and_tap(xml, "Create")
+        if not find_and_tap(xml, "Create"):
+            tap_x = int(w * 0.5)
+            tap_y = int(h * 0.9)
+            run_adb(f"shell input tap {tap_x} {tap_y}")
+            time.sleep(3)
     
     # 10. Scrape the key
     print("[*] Scraping screen for 64-digit key...")
@@ -269,7 +281,7 @@ def automate_whatsapp_ui() -> str | None:
         hex_key = scrape_via_clipboard()
     
     if hex_key:
-        print("\n[✅ SUCCESS] 64-digit key scraped automatically!")
+        print("\n[SUCCESS] 64-digit key scraped automatically!")
         print("    Key: <REDACTED_KEY>")  # Redacted output to avoid leak
         
         # Close WhatsApp after scraping the key
