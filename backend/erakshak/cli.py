@@ -470,8 +470,11 @@ def cmd_whatsapp_decrypt(args: argparse.Namespace) -> None:
         exhibit_id=args.exhibit,
         encrypted_backup_path=Path(args.backup),
         output_root=Path(args.output),
+        adb_path=args.adb_path,
+        serial=args.serial if args.serial != "auto" else None,
         hex_key_manual=args.hex_key,
     )
+
 
     if res["status"] == "success":
         print("\n" + "=" * 50)
@@ -554,7 +557,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp_wa_dec.add_argument("--backup", required=True, help="Path to encrypted WhatsApp backup file")
     sp_wa_dec.add_argument("--hex-key", required=True, help="64-character WhatsApp backup encryption key")
     sp_wa_dec.add_argument("--output", default="cases", help="Output root directory")
+    sp_wa_dec.add_argument("--serial", default="auto", help="ADB device serial or 'auto'")
+    sp_wa_dec.add_argument("--adb-path", default="adb", help="Path to ADB binary")
     sp_wa_dec.set_defaults(func=cmd_whatsapp_decrypt)
+
 
     return parser
 
