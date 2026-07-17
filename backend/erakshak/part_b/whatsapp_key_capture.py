@@ -1,7 +1,7 @@
 """WhatsApp UI Key Capture Module for E-RAKSHAK.
 
 Automates WhatsApp UI navigation over ADB to retrieve the 64-character
-End-to-End Encrypted Backup encryption key.
+End-to-End Encrypted Backup encryption key, and triggers a fresh backup.
 """
 
 from __future__ import annotations
@@ -65,32 +65,31 @@ def get_screen_size() -> tuple[int, int]:
 
 
 def dump_ui() -> str | None:
-    """BULLETPROOF UI DUMP: Uses --compressed and checks for success string."""
-    for attempt in range(3):
+    """BULLETPROOF UI DUMP: Removed strict string check to prevent false failures."""
+    for attempt in range(5):
         run_adb("shell rm /sdcard/ui_dump.xml")
-        res = run_adb("shell uiautomator dump --compressed /sdcard/ui_dump.xml")
-        if res and "dumped to" in res:
-            run_adb("pull /sdcard/ui_dump.xml ui_dump.xml")
-            try:
-                if os.path.exists("ui_dump.xml"):
-                    with open("ui_dump.xml", "r", encoding="utf-8") as f:
-                        xml_content = f.read()
-                    os.remove("ui_dump.xml")
-                    if len(xml_content) > 100: 
-                        return xml_content
-            except Exception:
-                pass
+        run_adb("shell uiautomator dump --compressed /sdcard/ui_dump.xml")
+        run_adb("pull /sdcard/ui_dump.xml ui_dump.xml")
+        
+        try:
+            if os.path.exists("ui_dump.xml"):
+                with open("ui_dump.xml", "r", encoding="utf-8") as f:
+                    xml_content = f.read()
+                os.remove("ui_dump.xml")
+                if len(xml_content) > 100: 
+                    return xml_content
+        except Exception:
+            pass
         time.sleep(1.5)
     return None
 
 
 def tap_node(node) -> bool:
-    """Extracts bounds from an XML node and taps it."""
+    """Extracts bounds from an XML node and taps the exact center."""
     bounds = node.get('bounds', '')
     match = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
     if match:
         x1, y1, x2, y2 = map(int, match.groups())
-        # Ignore invisible/zero-size elements
         if x2 - x1 < 10 or y2 - y1 < 10:
             return False
         
@@ -104,7 +103,7 @@ def tap_node(node) -> bool:
 
 
 def find_and_tap(xml_content: str | None, target_text: str) -> bool:
-    """Precision XML matcher. Prioritizes exact text matches over messy content-desc."""
+    """Precision XML matcher. Prioritizes exact text matches to avoid parent containers."""
     if not xml_content:
         return False
     
@@ -116,7 +115,7 @@ def find_and_tap(xml_content: str | None, target_text: str) -> bool:
     nodes = list(root.iter('node'))
     target_lower = target_text.lower()
 
-    # Pass 1: Exact match on 'text' attribute (e.g., text="Chats")
+    # Pass 1: Exact match on 'text' attribute
     for node in nodes:
         if node.get('text', '').strip().lower() == target_lower:
             if tap_node(node): return True
@@ -132,7 +131,7 @@ def find_and_tap(xml_content: str | None, target_text: str) -> bool:
         if node.get('content-desc', '').strip().lower() == target_lower:
             if tap_node(node): return True
 
-    # Pass 4: Partial match on 'content-desc' attribute (e.g., desc="Chats,Theme...")
+    # Pass 4: Partial match on 'content-desc' attribute
     for node in nodes:
         d = node.get('content-desc', '').strip().lower()
         if target_lower in d:
@@ -141,8 +140,8 @@ def find_and_tap(xml_content: str | None, target_text: str) -> bool:
     return False
 
 
-def smart_tap(target_text: str, fallback_x_pct: float, fallback_y_pct: float, w: int, h: int, timeout: int = 8) -> bool:
-    """Waits for text to appear. If XML fails, falls back to coordinates."""
+def smart_tap(target_text: str, timeout: int = 15) -> bool:
+    """Waits for text to appear on screen. NO BLIND FALLBACK TAPS."""
     print(f"[*] Looking for '{target_text}'...")
     start_time = time.time()
     
@@ -152,12 +151,8 @@ def smart_tap(target_text: str, fallback_x_pct: float, fallback_y_pct: float, w:
             return True
         time.sleep(1.5)
         
-    print(f"  -> XML failed. Falling back to coordinates for '{target_text}'...")
-    tap_x = int(w * fallback_x_pct)
-    tap_y = int(h * fallback_y_pct)
-    run_adb(f"shell input tap {tap_x} {tap_y}")
-    time.sleep(3)
-    return True
+    print(f"  -> FAILED to find '{target_text}' after {timeout} seconds.")
+    return False
 
 
 def scrape_64_digit_key(xml_content: str | None) -> str | None:
@@ -195,8 +190,7 @@ def scrape_via_clipboard() -> str | None:
     time.sleep(2)
     
     print("  -> Looking for Copy button...")
-    xml = dump_ui()
-    smart_tap("Copy", 0.5, 0.5, w, h)
+    smart_tap("Copy")
     time.sleep(2)
     
     print("  -> Reading Android clipboard...")
@@ -211,8 +205,56 @@ def scrape_via_clipboard() -> str | None:
     return None
 
 
+def monitor_backup_progress() -> bool:
+    """Monitors the screen strictly for 100% completion, then exits immediately."""
+    print("\n[*] Monitoring backup progress (waiting for 100%)...")
+    start_time = time.time()
+    timeout = 3600 # 1 hour max wait
+    
+    while time.time() - start_time < timeout:
+        xml = dump_ui()
+        if not xml:
+            time.sleep(3)
+            continue
+            
+        try:
+            root = ET.fromstring(xml)
+            screen_text = ""
+            for node in root.iter('node'):
+                t = node.get('text', '')
+                cd = node.get('content-desc', '')
+                if t: screen_text += t + " "
+                if cd: screen_text += cd + " "
+                    
+            # Check for percentage (e.g., "22%", "100%")
+            pct_match = re.search(r'(\d+)%', screen_text)
+            if pct_match:
+                pct = pct_match.group(1)
+                print(f"  -> Backup Progress: {pct}%", end='\r')
+                
+                # The moment we hit 100%, kill it and return!
+                if pct == "100":
+                    print("\n[*] Backup reached 100%. Closing WhatsApp immediately.")
+                    return True
+            else:
+                # Fallback just in case it finishes without showing 100%
+                screen_lower = screen_text.lower()
+                if "last backup" in screen_lower and "backing up" not in screen_lower:
+                    print("\n[*] Backup finished (returned to settings screen).")
+                    return True
+                print("  -> Waiting for percentage to disappear...", end='\r')
+                
+        except ET.ParseError:
+            pass
+            
+        time.sleep(3)
+        
+    print("\n[-] Backup monitoring timed out after 1 hour.")
+    return False
+
+
 def automate_whatsapp_ui() -> str | None:
-    """Core WhatsApp UI automation flow."""
+    """Core WhatsApp UI automation flow. Scrapes key and triggers fresh backup."""
     print("\n" + "="*50)
     print("[!] INITIATING ROBUST UI AUTOMATION [!]")
     print("DO NOT TOUCH THE PHONE. The script is controlling it.")
@@ -225,30 +267,32 @@ def automate_whatsapp_ui() -> str | None:
     time.sleep(4)
     
     print("[*] Opening Main Menu...")
-    smart_tap("More options", 0.93, 0.07, w, h)
+    smart_tap("More options")
     
     print("[*] Tapping Settings...")
-    smart_tap("Settings", 0.75, 0.85, w, h)
+    smart_tap("Settings")
     
     print("[*] Tapping Chats...")
-    smart_tap("Chats", 0.5, 0.45, w, h)
+    if not smart_tap("Chats"):
+        print("[*] 'Chats' heading not found. Falling back to 'Theme, wallpapers, chat history'...")
+        smart_tap("Theme, wallpapers, chat history")
     
     print("[*] Tapping Chat Backup...")
-    smart_tap("Chat backup", 0.5, 0.65, w, h)
+    smart_tap("Chat backup")
     
     print("[*] Tapping End-to-End Encrypted Backup...")
-    smart_tap("End-to-end encrypted backup", 0.5, 0.45, w, h)
+    smart_tap("End-to-end encrypted backup")
     
     print("[*] Looking for 'More options' button on E2EE screen...")
-    if not smart_tap("More options", 0.93, 0.07, w, h):
-        smart_tap("Change password", 0.93, 0.07, w, h)
+    if not smart_tap("More options"):
+        smart_tap("Change password")
     
     print("[*] Selecting '64-digit encryption key' option...")
-    smart_tap("64-digit encryption key", 0.5, 0.60, w, h)
+    smart_tap("64-digit encryption key")
     
     print("[*] Looking for Generate/Create button...")
-    if not smart_tap("Generate", 0.85, 0.90, w, h):
-        smart_tap("Create", 0.85, 0.90, w, h)
+    if not smart_tap("Generate"):
+        smart_tap("Create")
     
     print("[*] Scraping screen for 64-digit key...")
     hex_key = None
@@ -266,6 +310,21 @@ def automate_whatsapp_ui() -> str | None:
     if hex_key:
         print("\n[SUCCESS] 64-digit key scraped automatically!")
         print("    Key: <REDACTED_KEY>")
+        
+        # --- TRIGGER FRESH BACKUP ---
+        print("\n[*] Tapping Continue...")
+        smart_tap("Continue")
+        
+        print("[*] Tapping 'I saved my 64-digit key'...")
+        if not smart_tap("I saved my 64-digit key"):
+            if not smart_tap("Turn on"):
+                smart_tap("Done")
+        
+        print("[*] Tapping 'Create' / 'Back up' to trigger backup...")
+        if not smart_tap("Create"):
+            smart_tap("Back up")
+            
+        monitor_backup_progress()
         
         print("[*] Closing WhatsApp...")
         run_adb("shell am force-stop com.whatsapp")

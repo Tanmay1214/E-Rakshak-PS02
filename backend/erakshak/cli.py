@@ -493,6 +493,56 @@ def cmd_whatsapp_decrypt(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_parse_whatsapp(args: argparse.Namespace) -> None:
+    """Parse decrypted WhatsApp database with Whatsapp-Chat-Exporter."""
+    print_banner()
+    print("[*] Parsing decrypted WhatsApp database with Whatsapp-Chat-Exporter")
+
+    from erakshak.part_b.whatsapp_parse_pipeline import parse_decrypted_whatsapp
+
+    input_dir = Path(args.input) if args.input else None
+    wa_db = Path(args.wa_db) if args.wa_db else None
+    media_dir = Path(args.media) if args.media else None
+    vcard_path = Path(args.vcard) if args.vcard else None
+    time_offset = int(args.time_offset) if args.time_offset is not None else None
+
+    try:
+        res = parse_decrypted_whatsapp(
+            case_id=args.case,
+            exhibit_id=args.exhibit,
+            output_root=Path(args.output),
+            input_dir=input_dir,
+            wa_db=wa_db,
+            media_dir=media_dir,
+            vcard_path=vcard_path,
+            time_offset=time_offset,
+            filter_date=args.date,
+            filter_date_format=args.date_format
+        )
+
+        
+        if res["status"] == "success":
+            print("\n" + "=" * 50)
+            print("  WhatsApp Chat Parsing Successful")
+            print("=" * 50)
+            print(f"  Plaintext msgstore.db used  : {res['msgstore_db']}")
+            print(f"  Contact wa.db database used : {res['wa_db'] or 'None'}")
+            print(f"  WhatsApp Media folder used  : {res['media_dir'] or 'None'}")
+            print(f"  Output HTML report directory: {res['html_output_dir']}")
+            print(f"  Output JSON results path    : {res['json_output_path']}")
+            print(f"  Total generated files count : {res['generated_file_count']}")
+            print("=" * 50 + "\n")
+            sys.exit(0)
+        else:
+            err = res.get("stderr", "Parsing failed.")
+            print(f"\n[ERROR] WhatsApp Chat Export Failed: {err}\n")
+            sys.exit(1)
+    except Exception as e:
+        print(f"\n[ERROR] WhatsApp Chat Export Failed: {str(e)}\n")
+        sys.exit(1)
+
+
+
 # ═════════════════════════════════════════════════════════════════════
 # Argument parser
 # ═════════════════════════════════════════════════════════════════════
@@ -559,7 +609,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp_wa_dec.add_argument("--output", default="cases", help="Output root directory")
     sp_wa_dec.add_argument("--serial", default="auto", help="ADB device serial or 'auto'")
     sp_wa_dec.add_argument("--adb-path", default="adb", help="Path to ADB binary")
-    sp_wa_dec.set_defaults(func=cmd_whatsapp_decrypt)
+    # ── parse-whatsapp ────────────────────────────────────────────────
+    sp_wa_parse = subparsers.add_parser("parse-whatsapp", help="Parse decrypted WhatsApp database with Whatsapp-Chat-Exporter")
+    sp_wa_parse.add_argument("--case", required=True, help="Case identifier")
+    sp_wa_parse.add_argument("--exhibit", required=True, help="Exhibit identifier")
+    sp_wa_parse.add_argument("--output", default="cases", help="Output root directory")
+    sp_wa_parse.add_argument("--input", default=None, help="Path to decrypted folder containing msgstore.db")
+    sp_wa_parse.add_argument("--wa-db", default=None, help="Path to wa.db contacts database")
+    sp_wa_parse.add_argument("--media", default=None, help="Path to WhatsApp media folder")
+    sp_wa_parse.add_argument("--vcard", default=None, help="Path to contacts.vcf file")
+    sp_wa_parse.add_argument("--time-offset", type=int, default=None, help="Time offset in hours")
+    sp_wa_parse.add_argument("--date", default=None, help="The date filter (e.g. '> YYYY-MM-DD' or 'YYYY-MM-DD - YYYY-MM-DD')")
+    sp_wa_parse.add_argument("--date-format", default="%Y-%m-%d", help="Format for the date filter (default: %Y-%m-%d)")
+    sp_wa_parse.set_defaults(func=cmd_parse_whatsapp)
 
 
     return parser

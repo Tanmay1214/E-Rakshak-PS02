@@ -1,0 +1,283 @@
+"""WhatsApp Exporter Parsing Pipeline Orchestration.
+
+Invokes wtsexporter to parse plaintext database and stages outputs into manifest,
+hashes, and preview summaries.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Optional, Any
+
+from erakshak.case.hashing import hash_file
+from erakshak.part_b.whatsapp_exporter_runner import run_whatsapp_chat_exporter
+from erakshak.part_b.whatsapp_pipeline import (
+    append_audit_event,
+    append_manifest_record,
+    append_sha256sum
+)
+
+
+def parse_decrypted_whatsapp(
+    case_id: str,
+    exhibit_id: str,
+    output_root: Path,
+    input_dir: Optional[Path] = None,
+    wa_db: Optional[Path] = None,
+    media_dir: Optional[Path] = None,
+    vcard_path: Optional[Path] = None,
+    time_offset: Optional[int] = None,
+    filter_date: Optional[str] = None,
+    filter_date_format: Optional[str] = None
+) -> dict[str, Any]:
+    """Executes the complete WhatsApp parsing and export pipeline."""
+    exhibit_path = Path(output_root) / case_id / exhibit_id
+    acquisition_dir = exhibit_path / "acquisition"
+    audit_path = acquisition_dir / "audit.jsonl"
+    manifest_path = acquisition_dir / "acquisition_manifest.jsonl"
+    sha256sums_path = exhibit_path / "hashes" / "sha256sums.txt"
+
+    # 1. Start Audit
+    append_audit_event(
+        audit_path=audit_path,
+        case_id=case_id,
+        exhibit_id=exhibit_id,
+        action="whatsapp_exporter_parse_started",
+        result="started",
+        details={"parser": "Whatsapp-Chat-Exporter"}
+    )
+
+    # 1.5 Generate vCard from Part A contacts.jsonl if not explicitly provided
+    generated_vcard_path = None
+    if vcard_path is None:
+        contacts_jsonl = exhibit_path / "derived" / "contacts.jsonl"
+        if contacts_jsonl.is_file():
+            try:
+                import re
+                contacts_list = []
+                phone_keys = ["phone", "number", "data1", "phone_number", "formatted_number", "raw_number"]
+                name_keys = ["display_name", "name", "display_name_alt", "sort_key"]
+                
+                with open(contacts_jsonl, "r", encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            record = json.loads(line)
+                            if not isinstance(record, dict):
+                                continue
+                            
+                            # Extract name
+                            name = None
+                            for nk in name_keys:
+                                if nk in record and record[nk] and str(record[nk]).strip() and str(record[nk]) != "NULL":
+                                    name = str(record[nk]).strip()
+                                    break
+                                    
+                            # Extract phone
+                            phone = None
+                            for pk in phone_keys:
+                                if pk in record and record[pk] and str(record[pk]).strip() and str(record[pk]) != "NULL":
+                                    phone = str(record[pk]).strip()
+                                    break
+                                    
+                            # Scan all string values for phone-like patterns
+                            if not phone:
+                                for k, v in record.items():
+                                    if isinstance(v, str) and v.strip() and v != "NULL":
+                                        cleaned = v.strip()
+                                        if re.match(r"^\+?[0-9\-\s\(\)]{7,20}$", cleaned):
+                                            digits = re.sub(r"\D", "", cleaned)
+                                            if len(digits) >= 7:
+                                                phone = cleaned
+                                                break
+                                                
+                            if name and phone:
+                                contacts_list.append((name, phone))
+                        except Exception:
+                            continue
+                
+                if contacts_list:
+                    vcard_out_dir = exhibit_path / "derived" / "whatsapp_exporter"
+                    vcard_out_dir.mkdir(parents=True, exist_ok=True)
+                    generated_vcard_path = vcard_out_dir / "contacts.vcf"
+                    with open(generated_vcard_path, "w", encoding="utf-8") as vf:
+                        for name, phone in contacts_list:
+                            vf.write("BEGIN:VCARD\n")
+                            vf.write("VERSION:3.0\n")
+                            vf.write(f"FN:{name}\n")
+                            vf.write(f"TEL;TYPE=CELL:{phone}\n")
+                            vf.write("END:VCARD\n")
+                            
+                    vcard_path = generated_vcard_path
+            except Exception:
+                pass
+
+    # 2. Run Exporter
+    res = run_whatsapp_chat_exporter(
+        case_id=case_id,
+        exhibit_id=exhibit_id,
+        output_root=output_root,
+        input_dir=input_dir,
+        wa_db=wa_db,
+        media_dir=media_dir,
+        vcard_path=vcard_path,
+        time_offset=time_offset,
+        filter_date=filter_date,
+        filter_date_format=filter_date_format
+    )
+
+    if res["status"] == "success":
+        # Rename HTML files from <phone>-<name>.html to <name>.html to improve readability
+        html_dir = Path(res["html_output_dir"])
+        if html_dir.is_dir():
+            for f in list(html_dir.glob("*.html")):
+                name_parts = f.name.split("-", 1)
+                if len(name_parts) == 2 and name_parts[0].isdigit():
+                    new_name = name_parts[1]
+                    new_path = f.with_name(new_name)
+                    # Resolve collisions safely
+                    count = 1
+                    while new_path.exists():
+                        base = Path(new_name).stem
+                        new_path = f.with_name(f"{base}_{count}.html")
+                        count += 1
+                    try:
+                        f.rename(new_path)
+                    except Exception:
+                        pass
+
+        # Clean up any duplicate nested directories copied by wtsexporter (such as 'cases')
+        clutter_dir = html_dir / Path(output_root).name
+        if clutter_dir.is_dir():
+            import shutil
+            try:
+                shutil.rmtree(clutter_dir)
+            except Exception:
+                pass
+
+        # Hash files & append manifest records
+        html_dir = Path(res["html_output_dir"])
+        json_path = Path(res["json_output_path"])
+        
+        # Traverse html output directory to collect and hash files
+        files_to_hash = []
+        if html_dir.is_dir():
+            for f in html_dir.rglob("*"):
+                if f.is_file():
+                    files_to_hash.append(f)
+        if json_path.is_file():
+            files_to_hash.append(json_path)
+
+        for f in files_to_hash:
+            try:
+                sha = hash_file(f)
+                size = f.stat().st_size
+                append_sha256sum(sha256sums_path, sha, f)
+                
+                # Manifest log
+                append_manifest_record(manifest_path, {
+                    "case_id": case_id,
+                    "exhibit_id": exhibit_id,
+                    "artifact_class": "whatsapp_exporter_output",
+                    "source_type": "derived_parser_output",
+                    "parser": "Whatsapp-Chat-Exporter",
+                    "destination_path": str(f),
+                    "sha256": sha,
+                    "size_bytes": size,
+                    "status": "generated"
+                })
+            except Exception:
+                pass
+
+        # Try to parse result.json to get stats
+        chat_count = None
+        message_count = None
+        date_range = None
+        
+        if json_path.is_file():
+            try:
+                with open(json_path, "r", encoding="utf-8") as jf:
+                    data = json.load(jf)
+                    if isinstance(data, dict):
+                        chat_count = len(data)
+                        total_msg = 0
+                        for chat in data.values():
+                            if isinstance(chat, dict) and "messages" in chat:
+                                total_msg += len(chat["messages"])
+                            elif isinstance(chat, list):
+                                total_msg += len(chat)
+                        if total_msg > 0:
+                            message_count = total_msg
+            except Exception:
+                pass
+
+        # Write whatsapp_preview_summary.json
+        summary_path = exhibit_path / "derived" / "whatsapp_preview_summary.json"
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        summary = {
+            "app": "WhatsApp",
+            "parser": "Whatsapp-Chat-Exporter",
+            "status": "parsed",
+            "case_id": case_id,
+            "exhibit_id": exhibit_id,
+            "report_dir": f"derived/whatsapp_exporter/html",
+            "json_path": f"derived/whatsapp_exporter/result.json",
+            "generated_file_count": res["generated_file_count"],
+            "chat_count": chat_count,
+            "message_count": message_count,
+            "date_range": date_range,
+            "wa_db_used": bool(res["wa_db"]),
+            "media_dir_used": bool(res["media_dir"]),
+            "summary_precision": "basic"
+        }
+        
+        with open(summary_path, "w", encoding="utf-8") as sf:
+            json.dump(summary, sf, indent=2)
+
+        # Hash and manifest summary file
+        try:
+            summary_sha = hash_file(summary_path)
+            summary_size = summary_path.stat().st_size
+            append_sha256sum(sha256sums_path, summary_sha, summary_path)
+            append_manifest_record(manifest_path, {
+                "case_id": case_id,
+                "exhibit_id": exhibit_id,
+                "artifact_class": "whatsapp_preview_summary",
+                "source_type": "derived_parser_output",
+                "parser": "Whatsapp-Chat-Exporter",
+                "destination_path": str(summary_path),
+                "sha256": summary_sha,
+                "size_bytes": summary_size,
+                "status": "generated"
+            })
+        except Exception:
+            pass
+
+        # Completed Audit
+        append_audit_event(
+            audit_path=audit_path,
+            case_id=case_id,
+            exhibit_id=exhibit_id,
+            action="whatsapp_exporter_parse_completed",
+            result="success",
+            details={
+                "generated_file_count": res["generated_file_count"],
+                "json_output": "derived/whatsapp_exporter/result.json"
+            }
+        )
+    else:
+        # Failed Audit
+        append_audit_event(
+            audit_path=audit_path,
+            case_id=case_id,
+            exhibit_id=exhibit_id,
+            action="whatsapp_exporter_parse_failed",
+            result="failed",
+            details={"error": res.get("stderr", "Unknown error")}
+        )
+        
+    return res

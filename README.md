@@ -576,6 +576,44 @@ The 64-character backup key can be acquired in two ways:
 
 ---
 
+## WhatsApp Parsing with Whatsapp-Chat-Exporter
+
+E-RAKSHAK includes a parsing stage that processes the decrypted plaintext `msgstore.db` using `Whatsapp-Chat-Exporter` (`wtsexporter`) to generate HTML/JSON preview reports as derived forensic evidence.
+
+### Prerequisites
+
+- **whatsapp-chat-exporter**: Requires the package to be installed on the host:
+  ```bash
+  pip install whatsapp-chat-exporter
+  ```
+- **Plaintext Database**: The stage expects the decrypted SQLite database file:
+  ```
+  processed/apps/whatsapp/decrypted/msgstore.db
+  ```
+
+### Optional Inputs
+
+- **Contacts Database (`wa.db`)**: Enrich chats with real contact names.
+- **WhatsApp Media Folder**: Source directories for voice notes, images, and attachments.
+- **vCard Contacts File**: Google contacts export (`contacts.vcf`) to resolve missing names.
+
+### Execution
+
+To run the parsing pipeline:
+```bash
+python -m erakshak.cli parse-whatsapp --case CASE001 --exhibit EXHIBIT001 --output cases
+```
+
+### Advanced Staging & Parameters
+
+- **7-Day Default Filter**: If no date filter is passed, the tool defaults to filtering messages from the last 7 days (`> YYYY-MM-DD`). To override and parse everything, pass an explicit filter:
+  ```bash
+  python -m erakshak.cli parse-whatsapp --case CASE001 --exhibit EXHIBIT001 --output cases --date "> 2000-01-01"
+  ```
+- **Containment of Temp Files**: E-RAKSHAK forces the target media directory (`-m`) to `derived/whatsapp_exporter/media_temp/`. This prevents `wtsexporter` from creating a `WhatsApp` folder (containing thumbnails and vcards) in the E-RAKSHAK project root or Python working directory.
+
+---
+
 ## Legal & Ethical Notice
 
 > [!IMPORTANT]
