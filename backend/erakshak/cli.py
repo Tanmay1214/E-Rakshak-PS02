@@ -543,6 +543,52 @@ def cmd_parse_whatsapp(args: argparse.Namespace) -> None:
 
 
 
+
+def cmd_whatsapp_unified(args: argparse.Namespace) -> None:
+    """Run the complete unified WhatsApp pipeline: key capture -> decrypt -> parse."""
+    print_banner()
+    print("[*] Initiating unified WhatsApp pipeline: key capture -> decrypt -> parse")
+    print("Key will be used in memory and will not be printed.")
+
+    from erakshak.part_b.whatsapp_pipeline import run_whatsapp_unified_pipeline
+
+    try:
+        res = run_whatsapp_unified_pipeline(
+            case_id=args.case,
+            exhibit_id=args.exhibit,
+            encrypted_backup_path=Path(args.backup),
+            output_root=Path(args.output),
+            adb_path=args.adb_path,
+            serial=args.serial if args.serial != "auto" else None,
+            hex_key_manual=args.hex_key,
+            time_offset=args.time_offset,
+            filter_date=args.date,
+            filter_date_format=args.date_format
+        )
+
+        if res["status"] == "success":
+            dec = res["decryption"]
+            parse = res["parsing"]
+            print("\n" + "=" * 50)
+            print("  Unified WhatsApp Pipeline Successful")
+            print("=" * 50)
+            print(f"  Decrypted msgstore.db path  : {dec['decrypted_db_path']}")
+            print(f"  SHA-256 of decrypted DB     : {dec['decrypted_sha256']}")
+            print(f"  Output HTML report directory: {parse['html_output_dir']}")
+            print(f"  Output JSON results path    : {parse['json_output_path']}")
+            print(f"  Total generated files count : {parse['generated_file_count']}")
+            print("=" * 50 + "\n")
+            sys.exit(0)
+        else:
+            err = res.get("error", "Pipeline execution failed.")
+            print(f"\n[ERROR] WhatsApp Unified Pipeline Failed: {err}\n")
+            sys.exit(1)
+    except Exception as e:
+        print(f"\n[ERROR] WhatsApp Unified Pipeline Failed: {str(e)}\n")
+        sys.exit(1)
+
+
+
 # ═════════════════════════════════════════════════════════════════════
 # Argument parser
 # ═════════════════════════════════════════════════════════════════════
@@ -609,6 +655,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp_wa_dec.add_argument("--output", default="cases", help="Output root directory")
     sp_wa_dec.add_argument("--serial", default="auto", help="ADB device serial or 'auto'")
     sp_wa_dec.add_argument("--adb-path", default="adb", help="Path to ADB binary")
+    sp_wa_dec.set_defaults(func=cmd_whatsapp_decrypt)
+
     # ── parse-whatsapp ────────────────────────────────────────────────
     sp_wa_parse = subparsers.add_parser("parse-whatsapp", help="Parse decrypted WhatsApp database with Whatsapp-Chat-Exporter")
     sp_wa_parse.add_argument("--case", required=True, help="Case identifier")
@@ -622,6 +670,20 @@ def build_parser() -> argparse.ArgumentParser:
     sp_wa_parse.add_argument("--date", default=None, help="The date filter (e.g. '> YYYY-MM-DD' or 'YYYY-MM-DD - YYYY-MM-DD')")
     sp_wa_parse.add_argument("--date-format", default="%Y-%m-%d", help="Format for the date filter (default: %Y-%m-%d)")
     sp_wa_parse.set_defaults(func=cmd_parse_whatsapp)
+
+    # ── whatsapp-unified ──────────────────────────────────────────────
+    sp_wa_un = subparsers.add_parser("whatsapp-unified", help="Unified WhatsApp pipeline: UI key capture, decrypt backup, and parse chats")
+    sp_wa_un.add_argument("--case", required=True, help="Case identifier")
+    sp_wa_un.add_argument("--exhibit", required=True, help="Exhibit identifier")
+    sp_wa_un.add_argument("--backup", default="/sdcard/Android/media/com.whatsapp/WhatsApp/Databases/", help="Remote Android path or local file of encrypted backup")
+    sp_wa_un.add_argument("--output", default="cases", help="Output root directory")
+    sp_wa_un.add_argument("--serial", default="auto", help="ADB device serial or 'auto'")
+    sp_wa_un.add_argument("--adb-path", default="adb", help="Path to ADB binary")
+    sp_wa_un.add_argument("--hex-key", default=None, help="Optionally provide 64-character hex key manually to bypass UI automation")
+    sp_wa_un.add_argument("--time-offset", type=int, default=None, help="Time offset in hours")
+    sp_wa_un.add_argument("--date", default=None, help="The date filter (e.g. '> YYYY-MM-DD' or 'YYYY-MM-DD - YYYY-MM-DD')")
+    sp_wa_un.add_argument("--date-format", default="%Y-%m-%d", help="Format for the date filter (default: %Y-%m-%d)")
+    sp_wa_un.set_defaults(func=cmd_whatsapp_unified)
 
 
     return parser

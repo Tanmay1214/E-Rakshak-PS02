@@ -480,3 +480,73 @@ def run_whatsapp_key_capture_and_decrypt(
         })
 
     return pipeline_res
+
+
+def run_whatsapp_unified_pipeline(
+    case_id: str,
+    exhibit_id: str,
+    encrypted_backup_path: Path,
+    output_root: Path,
+    timeout_seconds: int = 300,
+    adb_path: str = "adb",
+    serial: str | None = None,
+    hex_key_manual: str | None = None,
+    time_offset: int | None = None,
+    filter_date: str | None = None,
+    filter_date_format: str | None = None,
+) -> dict[str, Any]:
+    """Runs the unified pipeline: UI key capture & decryption -> parsing & HTML/JSON report generation."""
+    # 1. Run capture and decryption
+    dec_res = run_whatsapp_key_capture_and_decrypt(
+        case_id=case_id,
+        exhibit_id=exhibit_id,
+        encrypted_backup_path=encrypted_backup_path,
+        output_root=output_root,
+        timeout_seconds=timeout_seconds,
+        adb_path=adb_path,
+        serial=serial,
+        hex_key_manual=hex_key_manual,
+    )
+    
+    if dec_res["status"] != "success":
+        return {
+            "status": "failed",
+            "error": f"Decryption stage failed: {dec_res.get('error', 'Unknown error')}"
+        }
+        
+    # 2. Run parse and export pipeline
+    from erakshak.part_b.whatsapp_parse_pipeline import parse_decrypted_whatsapp
+    
+    try:
+        parse_res = parse_decrypted_whatsapp(
+            case_id=case_id,
+            exhibit_id=exhibit_id,
+            output_root=output_root,
+            input_dir=None,
+            wa_db=None,
+            media_dir=None,
+            vcard_path=None,
+            time_offset=time_offset,
+            filter_date=filter_date,
+            filter_date_format=filter_date_format
+        )
+        
+        if parse_res["status"] == "success":
+            return {
+                "status": "success",
+                "decryption": dec_res,
+                "parsing": parse_res
+            }
+        else:
+            return {
+                "status": "failed",
+                "error": f"Parsing stage failed: {parse_res.get('stderr', 'Unknown error')}",
+                "decryption": dec_res
+            }
+    except Exception as e:
+        return {
+            "status": "failed",
+            "error": f"Parsing stage crashed: {str(e)}",
+            "decryption": dec_res
+        }
+

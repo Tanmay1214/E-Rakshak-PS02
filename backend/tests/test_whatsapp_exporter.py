@@ -300,3 +300,47 @@ def test_whatsapp_parse_pipeline_generates_vcard(mock_run: MagicMock, mock_find:
     assert "FN:Alka Bhabhi" in vcard_content
     assert "TEL;TYPE=CELL:0987654321" in vcard_content
 
+
+@patch("erakshak.part_b.whatsapp_pipeline.run_whatsapp_key_capture_and_decrypt")
+@patch("erakshak.part_b.whatsapp_parse_pipeline.parse_decrypted_whatsapp")
+def test_whatsapp_unified_pipeline(mock_parse: MagicMock, mock_decrypt: MagicMock, tmp_path: Path) -> None:
+    # Setup mock returns
+    mock_decrypt.return_value = {
+        "status": "success",
+        "decrypted_db_path": "cases/CASE001/EXHIBIT001/processed/apps/whatsapp/decrypted/msgstore.db",
+        "decrypted_sha256": "abc123dec",
+        "encrypted_backup_path": "cases/CASE001/EXHIBIT001/raw/apps/whatsapp/encrypted/msgstore.db.crypt15",
+        "encrypted_sha256": "abc123enc",
+        "sqlite_verified": True
+    }
+    
+    mock_parse.return_value = {
+        "status": "success",
+        "msgstore_db": "cases/CASE001/EXHIBIT001/processed/apps/whatsapp/decrypted/msgstore.db",
+        "wa_db": None,
+        "media_dir": None,
+        "html_output_dir": "cases/CASE001/EXHIBIT001/derived/whatsapp_exporter/html",
+        "json_output_path": "cases/CASE001/EXHIBIT001/derived/whatsapp_exporter/result.json",
+        "generated_file_count": 5
+    }
+    
+    from erakshak.part_b.whatsapp_pipeline import run_whatsapp_unified_pipeline
+    
+    res = run_whatsapp_unified_pipeline(
+        case_id="CASE001",
+        exhibit_id="EXHIBIT001",
+        encrypted_backup_path=Path("msgstore.db.crypt15"),
+        output_root=tmp_path,
+        hex_key_manual="00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+    )
+    
+    assert res["status"] == "success"
+    assert "decryption" in res
+    assert "parsing" in res
+    assert res["decryption"]["decrypted_sha256"] == "abc123dec"
+    assert res["parsing"]["generated_file_count"] == 5
+    
+    mock_decrypt.assert_called_once()
+    mock_parse.assert_called_once()
+
+

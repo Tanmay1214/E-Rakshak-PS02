@@ -685,6 +685,31 @@ python -m erakshak.cli parse-whatsapp --case CASE001 --exhibit EXHIBIT001 --outp
 
 ---
 
+## WhatsApp Unified Pipeline (Single Command)
+
+E-RAKSHAK provides a unified pipeline subcommand that automates the entire end-to-end flow: **UI automation settings navigation to scrape key -> encrypted database copying/pulling -> decryption -> contacts vCard mapping -> chat parsing & report generation** under a single step.
+
+### Execution
+
+To run the unified pipeline on a connected device:
+
+```bash
+python -m erakshak.cli whatsapp-unified --case CASE001 --exhibit EXHIBIT001 --output cases
+```
+
+**What it does sequentially:**
+1. Runs UI automation to unlock the End-to-End Encrypted settings screen and copy/scrape the 64-digit key into memory.
+2. Triggers a fresh backup on the device and monitors its progress until it reaches 100%.
+3. Pulls the latest encrypted database backup (`msgstore.db.crypt15`) from the device.
+4. Decrypts it using the in-memory key into `processed/apps/whatsapp/decrypted/msgstore.db`.
+5. Automatically reads the Part A contacts extraction list (`contacts.jsonl`), converts it to vCard, and maps all numbers to real contact names.
+6. Runs `wtsexporter` to generate pretty-printed JSON results and HTML chat preview files named cleanly by their mapped contact names.
+7. Deletes duplicate nested media directories inside the HTML reports folder to ensure pristine directory outputs.
+
+*Note: If you already have the 64-character key and want to bypass the UI automation capture, append `--hex-key <64-character-key>` to the command.*
+
+---
+
 ## Legal & Ethical Notice
 
 > [!IMPORTANT]
