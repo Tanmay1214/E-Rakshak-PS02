@@ -151,9 +151,9 @@ git clone https://github.com/Tanmay1214/E-Rakshak-PS02.git
 cd "E-Rakshak-PS02/backend"
 ```
 
-### 2. (Optional) Install dev dependencies
+### 2. Install all required dependencies
 
-E-RAKSHAK uses only the Python standard library at runtime. `pytest` is only needed for running unit tests:
+E-RAKSHAK requires a few third-party Python packages for Phase 1 Part B (decryption and chat parsing/exporting). Install them along with `pytest` (development and testing framework) via `requirements.txt`:
 
 ```bash
 pip install -r requirements.txt
@@ -349,6 +349,60 @@ Expected files in the export folder: `calls.jsonl`, `sms.jsonl`, `mms.jsonl`, `c
 
 ---
 
+### Step 4: WhatsApp Automation & UI Key Capture (Part B)
+
+To extract the 64-digit WhatsApp encryption key and force a fresh encrypted backup on the device:
+
+```bash
+python -m erakshak.cli whatsapp-key \
+    --case CASE001 \
+    --exhibit EXHIBIT001 \
+    --output cases \
+    --serial auto
+```
+
+This runs a visual UI automation sequence on the device, unlocks the End-to-End Encrypted settings screen, copies/scrapes the 64-digit key into memory (never writing it to files/logs), triggers a fresh backup, and monitors progress until it reaches 100%.
+
+---
+
+### Step 5: WhatsApp Backup Decryption (Part B)
+
+Copy the encrypted database backup from the device and decrypt it to a plaintext database using the captured key:
+
+```bash
+python -m erakshak.cli whatsapp-decrypt \
+    --case CASE001 \
+    --exhibit EXHIBIT001 \
+    --output cases \
+    --serial auto
+```
+
+- **Staged Encrypted Path**: `cases/CASE001/EXHIBIT001/raw/apps/whatsapp/encrypted/msgstore.db.crypt15`
+- **Decrypted Plaintext Path**: `cases/CASE001/EXHIBIT001/processed/apps/whatsapp/decrypted/msgstore.db`
+
+*Note: You can also specify a key manually by appending `--key <64-character-hex-key>` to bypass the UI automation if you already have the key.*
+
+---
+
+### Step 6: WhatsApp Chat Parsing & Export (Part B)
+
+Parse the decrypted plaintext database to generate HTML chat reports and a pretty-printed JSON dump:
+
+```bash
+python -m erakshak.cli parse-whatsapp \
+    --case CASE001 \
+    --exhibit EXHIBIT001 \
+    --output cases
+```
+
+**Key Features:**
+- **Dynamic Contact Mapping**: Automatically reads the Part A contacts extraction list (`derived/contacts.jsonl`), converts it into a vCard structure, and maps all WhatsApp chat phone numbers to real contact names.
+- **Clean Named Reports**: Renames the output files from `<phone>-<name>.html` to strictly `<name>.html` (e.g. `Darsh-Sharda-LNMIIT.html`) for easier incident responder analysis. Unmapped numbers are left named by their phone number.
+- **Pretty-Printed JSON**: Outputs `result.json` in a pretty-printed, indented format for easy viewing.
+- **7-Day Default Filter**: Automatically limits chat history previews to the last 7 days to keep reports fast and compact. To export all historical chats, specify a wide filter: `--date "> 2000-01-01"`.
+
+---
+
 ### Run Unit Tests
 
 ```bash
@@ -413,7 +467,17 @@ cases/
         │   │   └── packages_system.txt
         │   │
         │   ├── media/                        ← Pulled media files (if --pull-media true)
-        │   └── collector/                    ← Collector APK exports (if --collector-export-folder)
+        │   ├── collector/                    ← Collector APK exports (if --collector-export-folder)
+        │   └── apps/
+        │       └── whatsapp/
+        │           └── encrypted/
+        │               └── msgstore.db.crypt15  ← Encrypted WhatsApp backup copied from device
+        │
+        ├── processed/
+        │   └── apps/
+        │       └── whatsapp/
+        │           └── decrypted/
+        │               └── msgstore.db          ← Decrypted plaintext WhatsApp database
         │
         ├── derived/                          ← Parsed/structured JSON/JSONL outputs
         │   ├── device_identity.json
@@ -430,7 +494,14 @@ cases/
         │   ├── logcat_events.jsonl           ← Classified forensic log events
         │   ├── network_summary.json
         │   ├── network_connections.jsonl
-        │   └── media_index.jsonl             ← Full recursive file inventory
+        │   ├── media_index.jsonl             ← Full recursive file inventory
+        │   ├── whatsapp_preview_summary.json  ← Summary of WhatsApp chat message counts
+        │   └── whatsapp_exporter/
+        │       ├── contacts.vcf              ← Dynamically generated vCard file
+        │       ├── result.json               ← Pretty-printed JSON dump of all chats
+        │       └── html/
+        │           ├── Darsh-Sharda-LNMIIT.html <-- Clean named HTML chat files
+        │           └── 918799909000.html
         │
         └── hashes/
             └── sha256sums.txt                ← SHA-256 checksums (coreutils-compatible)
