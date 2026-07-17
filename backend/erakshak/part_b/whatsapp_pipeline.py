@@ -209,7 +209,57 @@ def run_whatsapp_key_capture_and_decrypt(
         "whatsapp_decryption_pipeline_started", "success"
     )
 
-    # 2. Verify and Copy/Pull Encrypted Backup
+    # 2. Key Acquisition (First, so UI automation can trigger and complete the backup before we pull it)
+    hex_key = None
+    key_source_type = "authorized_ui_capture"
+    meta_path = raw_enc_dir / "key_metadata.json"
+    meta_sha = ""
+    meta_size = 0
+    
+    try:
+        if hex_key_manual:
+            print("[*] Using manually provided encryption key...")
+            hex_key = validate_hex_key(hex_key_manual)
+            key_source_type = "manual_input"
+        else:
+            print("[*] Initiating automated key capture from device...")
+            append_audit_event(
+                audit_path, case_id, exhibit_id,
+                "whatsapp_key_capture_started", "success"
+            )
+            hex_key = capture_whatsapp_backup_key(adb_path=adb_path, serial=serial)
+            
+            meta = key_metadata(hex_key)
+            append_audit_event(
+                audit_path, case_id, exhibit_id,
+                "whatsapp_key_capture_completed", "success",
+                meta
+            )
+    except Exception as e:
+        err_msg = f"Key acquisition failed: {str(e)}"
+        print(f"[-] {err_msg}")
+        append_audit_event(
+            audit_path, case_id, exhibit_id,
+            "whatsapp_backup_decryption_failed", "failed",
+            {"error": err_msg}
+        )
+        pipeline_res["error"] = err_msg
+        
+        # Manifest record for failure
+        append_manifest_record(manifest_path, {
+            "case_id": case_id,
+            "exhibit_id": exhibit_id,
+            "artifact_class": "whatsapp_decrypted_msgstore",
+            "source_type": "wadecrypt",
+            "destination_path": "",
+            "sha256": "",
+            "size_bytes": 0,
+            "status": "failed",
+            "sqlite_verified": False
+        })
+        return pipeline_res
+
+    # 3. Verify and Copy/Pull Encrypted Backup
     backup_str = str(encrypted_backup_path)
     is_remote = is_remote_android_path(backup_str)
     
@@ -289,71 +339,13 @@ def run_whatsapp_key_capture_and_decrypt(
             pipeline_res["error"] = err_msg
             return pipeline_res
 
-    # 3. Hash Encrypted Backup
+    # 4. Hash Encrypted Backup
     enc_sha = hash_file(dest_backup)
     enc_size = dest_backup.stat().st_size
     pipeline_res["encrypted_backup_path"] = str(dest_backup)
     pipeline_res["encrypted_sha256"] = enc_sha
     
     append_sha256sum(sha256sums_path, enc_sha, dest_backup)
-
-    # 4. Key Acquisition
-    hex_key = None
-    key_source_type = "authorized_ui_capture"
-    
-    try:
-        if hex_key_manual:
-            print("[*] Using manually provided encryption key...")
-            hex_key = validate_hex_key(hex_key_manual)
-            key_source_type = "manual_input"
-        else:
-            print("[*] Initiating automated key capture from device...")
-            append_audit_event(
-                audit_path, case_id, exhibit_id,
-                "whatsapp_key_capture_started", "success"
-            )
-            hex_key = capture_whatsapp_backup_key(adb_path=adb_path, serial=serial)
-            
-            meta = key_metadata(hex_key)
-            append_audit_event(
-                audit_path, case_id, exhibit_id,
-                "whatsapp_key_capture_completed", "success",
-                meta
-            )
-    except Exception as e:
-        err_msg = f"Key acquisition failed: {str(e)}"
-        print(f"[-] {err_msg}")
-        append_audit_event(
-            audit_path, case_id, exhibit_id,
-            "whatsapp_backup_decryption_failed", "failed",
-            {"error": err_msg}
-        )
-        pipeline_res["error"] = err_msg
-        
-        # Manifest record for failure
-        append_manifest_record(manifest_path, {
-            "case_id": case_id,
-            "exhibit_id": exhibit_id,
-            "artifact_class": "whatsapp_encrypted_backup",
-            "source_type": source_type,
-            "source_path": source_path_val,
-            "destination_path": str(dest_backup),
-            "sha256": enc_sha,
-            "size_bytes": enc_size,
-            "status": "acquired"
-        })
-        append_manifest_record(manifest_path, {
-            "case_id": case_id,
-            "exhibit_id": exhibit_id,
-            "artifact_class": "whatsapp_decrypted_msgstore",
-            "source_type": "wadecrypt",
-            "destination_path": "",
-            "sha256": "",
-            "size_bytes": 0,
-            "status": "failed",
-            "sqlite_verified": False
-        })
-        return pipeline_res
 
     # 5. Save Key Metadata
     meta = key_metadata(hex_key)
