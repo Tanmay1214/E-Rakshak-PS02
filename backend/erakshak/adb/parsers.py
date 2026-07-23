@@ -722,11 +722,20 @@ _LS_LINE_RE = re.compile(
 )
 
 
-def parse_ls_output(text: str) -> list[dict[str, Any]]:
+def parse_ls_output(text: str, current_dir_hint: str = "") -> list[dict[str, Any]]:
     """Parse ``ls -laR`` output from an ADB shell.
 
     Directory headers end with ``:``, file entries follow the standard
     ``ls -l`` format.
+
+    Parameters
+    ----------
+    text:
+        Raw output of ``ls -la`` or ``ls -laR``.
+    current_dir_hint:
+        Optional fallback directory to use when the output contains no
+        directory header line (e.g. a single-file ``ls -la <path>``
+        invocation).  Ignored if the output already contains a header.
 
     Returns list of dicts with *path*, *filename*, *size*, *date*, *time*,
     *permissions*, *type* (``file``, ``dir``, ``link``).
@@ -735,7 +744,7 @@ def parse_ls_output(text: str) -> list[dict[str, Any]]:
     if not text:
         return results
 
-    current_dir = ""
+    current_dir = current_dir_hint
 
     for line in text.splitlines():
         stripped = line.strip()

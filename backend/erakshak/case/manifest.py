@@ -62,7 +62,7 @@ class ManifestWriter:
         source_command_or_path: str,
         destination_path: Path,
         status: str = "acquired",
-        reason_code: str = "",
+        reason_code: str | None = "",
         started_at: str = "",
         completed_at: str = "",
     ) -> dict:
@@ -108,7 +108,7 @@ class ManifestWriter:
             "started_at": started_at,
             "completed_at": completed_at,
             "status": status,
-            "reason_code": reason_code,
+            "reason_code": reason_code or "",
             "tool_version": TOOL_VERSION,
         }
 

@@ -380,6 +380,84 @@ def cmd_acquire_part_a(args: argparse.Namespace) -> None:  # noqa: C901 — inte
     print("[SUCCESS] Acquisition Part-A finished.\n")
 
 
+def cmd_telegram_acquire(args: argparse.Namespace) -> None:
+    """Run Telegram MVP acquisition and parsing pipeline."""
+    print_banner()
+    start_time = datetime.now(timezone.utc)
+    print(f"[*] Telegram MVP - Case: {args.case}  Exhibit: {args.exhibit}")
+    print(f"[*] Started at {start_time.isoformat()}")
+
+    adb_path = getattr(args, "adb_path", "adb")
+    serial = _resolve_serial(args.serial, adb_path=adb_path)
+    output_root = Path(args.output).resolve()
+
+    # Infrastructure
+    case_folder = CaseFolder(output_root, args.case, args.exhibit)
+    case_path = case_folder.create()
+
+    audit_path = case_path / "acquisition" / "audit.jsonl"
+    manifest_path = case_path / "acquisition" / "acquisition_manifest.jsonl"
+    sha256sums_path = case_path / "hashes" / "sha256sums.txt"
+    sha256sums_path.parent.mkdir(parents=True, exist_ok=True)
+
+    audit = AuditLogger(audit_path, args.case, args.exhibit)
+    manifest = ManifestWriter(manifest_path, sha256sums_path, args.case, args.exhibit)
+    client = ADBClient(serial, audit, adb_path)
+
+    from erakshak.part_b.telegram_pipeline import run_telegram_pipeline
+
+    print("\n" + "=" * 60)
+    print("  TELEGRAM ACQUISITION & PARSING")
+    print("=" * 60)
+    
+    summary = run_telegram_pipeline(
+        adb=client,
+        case_folder=case_folder,
+        manifest=manifest,
+        audit=audit
+    )
+
+    end_time = datetime.now(timezone.utc)
+    elapsed = (end_time - start_time).total_seconds()
+
+    acq = summary.get("acquisition", {})
+    pars = summary.get("parsing", {})
+
+    print("\n" + "=" * 60)
+    print("  TELEGRAM MVP FINAL SUMMARY")
+    print("=" * 60)
+    print(f"  Packages found    : {len(acq.get('packages_found', []))}")
+    print(f"  Packages missing  : {len(acq.get('packages_not_found', []))}")
+    print(f"  Databases acquired: {len(pars.get('parsed_dbs', [])) + len(pars.get('unsupported_dbs', []))}")
+    print(f"  Parsed successfully: {len(pars.get('parsed_dbs', []))}")
+    print(f"  Unsupported schemas: {len(pars.get('unsupported_dbs', []))}")
+    print(f"  Extracted users   : {pars.get('total_users', 0)}")
+    print(f"  Extracted messages: {pars.get('total_messages', 0)}")
+    print(f"  Extracted dialogs : {pars.get('total_dialogs', 0)}")
+    print(f"  Output directory  : {summary.get('output_dir', 'N/A')}")
+    print(f"  Elapsed time      : {elapsed:.1f}s")
+    
+    warnings = acq.get("warnings", []) + pars.get("warnings", [])
+    errors = acq.get("errors", []) + pars.get("errors", [])
+    
+    if warnings:
+        print("  --- Warnings ---")
+        for w in warnings:
+            print(f"    [WARN] {w}")
+    if errors:
+        print("  --- Errors ---")
+        for e in errors:
+            print(f"    [ERROR] {e}")
+            
+    if errors:
+        print("=" * 60)
+        print("[COMPLETED WITH ERRORS] Telegram MVP finished.\n")
+        sys.exit(1)
+    else:
+        print("=" * 60)
+        print("[SUCCESS] Telegram MVP finished.\n")
+        sys.exit(0)
+
 
 def cmd_verify(args: argparse.Namespace) -> None:
     """Verify SHA-256 integrity of an existing case folder."""
@@ -635,6 +713,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp_ver.add_argument("--case-folder", required=True,
                         help="Path to the case/exhibit folder (e.g. cases/CASE001/EX001)")
     sp_ver.set_defaults(func=cmd_verify)
+    
+    # ── telegram-acquire ──────────────────────────────────────────────
+    sp_tg = subparsers.add_parser("telegram-acquire", help="Run Telegram MVP acquisition and parsing")
+    sp_tg.add_argument("--case", required=True, help="Case identifier")
+    sp_tg.add_argument("--exhibit", required=True, help="Exhibit identifier")
+    sp_tg.add_argument("--serial", default="auto", help="ADB device serial or 'auto'")
+    sp_tg.add_argument("--output", default="cases", help="Output root directory")
+    sp_tg.add_argument("--adb-path", default="adb", help="Path to ADB binary")
+    sp_tg.set_defaults(func=cmd_telegram_acquire)
 
     # ── whatsapp-auto-decrypt ─────────────────────────────────────────
     sp_wa_auto = subparsers.add_parser("whatsapp-auto-decrypt", help="Automated key capture and decrypt WhatsApp backup")

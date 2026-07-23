@@ -46,6 +46,7 @@ class CaseFolder:
             self.raw_system_dir,
             self.raw_media_dir,
             self.raw_collector_dir,
+            self.raw_apps_telegram_dir,
             self.derived_dir,
             self.hashes_dir,
         ]
@@ -74,6 +75,16 @@ class CaseFolder:
     def raw_collector_dir(self) -> Path:
         """Directory for on-device collector output (calls, SMS, etc.)."""
         return self.exhibit_path / "raw" / "collector"
+
+    @property
+    def raw_apps_dir(self) -> Path:
+        """Directory for raw acquired application database groups."""
+        return self.exhibit_path / "raw" / "apps"
+
+    @property
+    def raw_apps_telegram_dir(self) -> Path:
+        """Directory for raw acquired Telegram database groups."""
+        return self.raw_apps_dir / "telegram"
 
     @property
     def derived_dir(self) -> Path:

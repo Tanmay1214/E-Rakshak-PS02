@@ -32,6 +32,7 @@ MEDIA_TARGET_FOLDERS: list[str] = [
     "/sdcard/Download",
     "/sdcard/WhatsApp/Media",
     "/sdcard/Android/media",
+    "/sdcard/Telegram",
 ]
 
 # ── Collector expected output files ──────────────────────────────────────────

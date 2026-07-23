@@ -114,7 +114,7 @@ class AuditLogger:
         command_redacted = " ".join(str(p) for p in command_parts)
         return_code: int | None = getattr(adb_result, "return_code", None)
         duration_ms: float | None = getattr(adb_result, "duration_ms", None)
-        success: bool = getattr(adb_result, "success", False)
+        success: bool = getattr(adb_result, "ok", False)
         stderr: str = getattr(adb_result, "stderr", "")
 
         result_str = "acquired" if success else "failed"

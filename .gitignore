@@ -2,6 +2,8 @@
 
 # Android SDK Platform Tools (large binaries, download separately)
 platform-tools/
+*.apk
+
 
 # Open-source Node/TS workspace (unmodified mnfst/manifest clone)
 manifest/
