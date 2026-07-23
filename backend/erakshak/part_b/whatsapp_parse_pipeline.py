@@ -40,28 +40,107 @@ def parse_decrypted_whatsapp(
     manifest_path = acquisition_dir / "acquisition_manifest.jsonl"
     sha256sums_path = exhibit_path / "hashes" / "sha256sums.txt"
 
-    if source == "rooted" and package and input_dir is None:
-        rooted_dir = exhibit_path / "processed" / "apps" / "whatsapp" / "rooted" / package
-        if rooted_dir.is_dir():
-            input_dir = rooted_dir
-            if wa_db is None and (rooted_dir / "wa.db").is_file():
-                wa_db = rooted_dir / "wa.db"
-            if media_dir is None and (rooted_dir / "media").is_dir():
-                media_dir = rooted_dir / "media"
-        else:
-            raise FileNotFoundError(
-                "Rooted WhatsApp parser-ready folder not found. Run acquire-whatsapp-root or import-whatsapp-root first."
+    warnings = []
+
+    if source == "rooted":
+        if not package:
+            package = "com.whatsapp"
+        if input_dir is None:
+            input_dir = exhibit_path / "processed" / "apps" / "whatsapp" / "rooted" / package
+        
+        input_dir = Path(input_dir)
+        msgstore_db = input_dir / "msgstore.db"
+        
+        if not msgstore_db.is_file():
+            fail_action = "whatsapp_root_parse_failed"
+            append_audit_event(
+                audit_path=audit_path,
+                case_id=case_id,
+                exhibit_id=exhibit_id,
+                action=fail_action,
+                result="failed",
+                details={
+                    "parser": "Whatsapp-Chat-Exporter",
+                    "source_folder": str(input_dir),
+                    "output_folder": str(exhibit_path / "derived" / "whatsapp_exporter" / "rooted" / package),
+                    "msgstore_present": "no",
+                    "wa_db_present": "no",
+                    "media_folder_present": "no",
+                    "generated_file_count": 0,
+                    "warnings": ["msgstore.db not found"],
+                    "error": "Rooted WhatsApp msgstore.db not found. Run acquire-whatsapp-root or import-whatsapp-root first."
+                }
             )
+            raise FileNotFoundError(
+                "Rooted WhatsApp msgstore.db not found. Run acquire-whatsapp-root or import-whatsapp-root first."
+            )
+            
+        try:
+            with open(msgstore_db, "rb") as f:
+                header = f.read(15)
+            is_sqlite = (header == b"SQLite format 3")
+        except Exception:
+            is_sqlite = False
+            
+        if not is_sqlite:
+            fail_action = "whatsapp_root_parse_failed"
+            append_audit_event(
+                audit_path=audit_path,
+                case_id=case_id,
+                exhibit_id=exhibit_id,
+                action=fail_action,
+                result="failed",
+                details={
+                    "parser": "Whatsapp-Chat-Exporter",
+                    "source_folder": str(input_dir),
+                    "output_folder": str(exhibit_path / "derived" / "whatsapp_exporter" / "rooted" / package),
+                    "msgstore_present": "yes",
+                    "wa_db_present": "no",
+                    "media_folder_present": "no",
+                    "generated_file_count": 0,
+                    "warnings": ["msgstore.db is not SQLite"],
+                    "error": "Rooted WhatsApp msgstore.db is not a valid plaintext SQLite database."
+                }
+            )
+            raise ValueError(
+                "Rooted WhatsApp msgstore.db is not a valid plaintext SQLite database."
+            )
+            
+        wa_db_path = input_dir / "wa.db"
+        if wa_db_path.is_file():
+            wa_db = wa_db_path
+        else:
+            wa_db = None
+            warn_msg = "wa.db not found; contact/name enrichment may be limited."
+            print(f"\n[WARNING] {warn_msg}\n")
+            warnings.append(warn_msg)
+            
+        media_path = input_dir / "media"
+        if media_path.is_dir():
+            media_dir = media_path
+        else:
+            media_dir = None
+            warn_msg = "media folder not found; media previews may be limited."
+            print(f"\n[WARNING] {warn_msg}\n")
+            warnings.append(warn_msg)
 
 
     # 1. Start Audit
+    start_action = "whatsapp_root_parse_started" if source == "rooted" else "whatsapp_exporter_parse_started"
     append_audit_event(
         audit_path=audit_path,
         case_id=case_id,
         exhibit_id=exhibit_id,
-        action="whatsapp_exporter_parse_started",
+        action=start_action,
         result="started",
-        details={"parser": "Whatsapp-Chat-Exporter"}
+        details={
+            "parser": "Whatsapp-Chat-Exporter",
+            "source_folder": str(input_dir) if input_dir else "",
+            "output_folder": str(exhibit_path / "derived" / "whatsapp_exporter" / "rooted" / package) if source == "rooted" else str(exhibit_path / "derived" / "whatsapp_exporter" / "html"),
+            "msgstore_present": "yes" if input_dir and (input_dir / "msgstore.db").is_file() else "no",
+            "wa_db_present": "yes" if wa_db else "no",
+            "media_folder_present": "yes" if media_dir else "no"
+        }
     )
 
     # 1.5 Generate vCard from Part A contacts.jsonl if not explicitly provided
@@ -142,7 +221,9 @@ def parse_decrypted_whatsapp(
         vcard_path=vcard_path,
         time_offset=time_offset,
         filter_date=filter_date,
-        filter_date_format=filter_date_format
+        filter_date_format=filter_date_format,
+        source=source,
+        package=package
     )
 
     if res["status"] == "success":
@@ -187,6 +268,10 @@ def parse_decrypted_whatsapp(
         if json_path.is_file():
             files_to_hash.append(json_path)
 
+        # Staging manifest artifact details:
+        artifact_class = "whatsapp_parsed_output" if source == "rooted" else "whatsapp_exporter_output"
+        source_type = "rooted_parser_output" if source == "rooted" else "derived_parser_output"
+
         for f in files_to_hash:
             try:
                 sha = hash_file(f)
@@ -194,17 +279,21 @@ def parse_decrypted_whatsapp(
                 append_sha256sum(sha256sums_path, sha, f)
                 
                 # Manifest log
-                append_manifest_record(manifest_path, {
+                manifest_record = {
                     "case_id": case_id,
                     "exhibit_id": exhibit_id,
-                    "artifact_class": "whatsapp_exporter_output",
-                    "source_type": "derived_parser_output",
+                    "artifact_class": artifact_class,
+                    "source_type": source_type,
                     "parser": "Whatsapp-Chat-Exporter",
-                    "destination_path": str(f),
+                    "destination_path": str(f.relative_to(exhibit_path)),
                     "sha256": sha,
                     "size_bytes": size,
                     "status": "generated"
-                })
+                }
+                if source == "rooted":
+                    manifest_record["package_name"] = package
+                    
+                append_manifest_record(manifest_path, manifest_record)
             except Exception:
                 pass
 
@@ -234,21 +323,26 @@ def parse_decrypted_whatsapp(
         summary_path = exhibit_path / "derived" / "whatsapp_preview_summary.json"
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         
+        status_summary = "parsed"
+        if warnings:
+            status_summary = "partial"
+            
         summary = {
             "app": "WhatsApp",
+            "package_name": package if source == "rooted" else "com.whatsapp",
+            "source": source or "decrypted",
             "parser": "Whatsapp-Chat-Exporter",
-            "status": "parsed",
-            "case_id": case_id,
-            "exhibit_id": exhibit_id,
-            "report_dir": f"derived/whatsapp_exporter/html",
-            "json_path": f"derived/whatsapp_exporter/result.json",
+            "status": status_summary,
+            "msgstore_db_used": True,
+            "wa_db_used": bool(wa_db),
+            "media_dir_used": bool(media_dir),
+            "report_dir": str(html_dir.relative_to(exhibit_path)) if html_dir.exists() else f"derived/whatsapp_exporter/html",
+            "json_output": str(json_path.relative_to(exhibit_path)) if json_path.exists() else f"derived/whatsapp_exporter/result.json",
             "generated_file_count": res["generated_file_count"],
             "chat_count": chat_count,
             "message_count": message_count,
             "date_range": date_range,
-            "wa_db_used": bool(res["wa_db"]),
-            "media_dir_used": bool(res["media_dir"]),
-            "summary_precision": "basic"
+            "warnings": warnings
         }
         
         with open(summary_path, "w", encoding="utf-8") as sf:
@@ -265,7 +359,7 @@ def parse_decrypted_whatsapp(
                 "artifact_class": "whatsapp_preview_summary",
                 "source_type": "derived_parser_output",
                 "parser": "Whatsapp-Chat-Exporter",
-                "destination_path": str(summary_path),
+                "destination_path": str(summary_path.relative_to(exhibit_path)),
                 "sha256": summary_sha,
                 "size_bytes": summary_size,
                 "status": "generated"
@@ -274,26 +368,44 @@ def parse_decrypted_whatsapp(
             pass
 
         # Completed Audit
+        complete_action = "whatsapp_root_parse_completed" if source == "rooted" else "whatsapp_exporter_parse_completed"
         append_audit_event(
             audit_path=audit_path,
             case_id=case_id,
             exhibit_id=exhibit_id,
-            action="whatsapp_exporter_parse_completed",
+            action=complete_action,
             result="success",
             details={
+                "parser": "Whatsapp-Chat-Exporter",
+                "source_folder": str(input_dir) if input_dir else "",
+                "output_folder": str(html_dir),
+                "msgstore_present": "yes" if input_dir and (input_dir / "msgstore.db").is_file() else "no",
+                "wa_db_present": "yes" if wa_db else "no",
+                "media_folder_present": "yes" if media_dir else "no",
                 "generated_file_count": res["generated_file_count"],
-                "json_output": "derived/whatsapp_exporter/result.json"
+                "warnings": warnings
             }
         )
     else:
         # Failed Audit
+        fail_action = "whatsapp_root_parse_failed" if source == "rooted" else "whatsapp_exporter_parse_failed"
         append_audit_event(
             audit_path=audit_path,
             case_id=case_id,
             exhibit_id=exhibit_id,
-            action="whatsapp_exporter_parse_failed",
+            action=fail_action,
             result="failed",
-            details={"error": res.get("stderr", "Unknown error")}
+            details={
+                "parser": "Whatsapp-Chat-Exporter",
+                "source_folder": str(input_dir) if input_dir else "",
+                "output_folder": str(exhibit_path / "derived" / "whatsapp_exporter" / "rooted" / package) if source == "rooted" else str(exhibit_path / "derived" / "whatsapp_exporter" / "html"),
+                "msgstore_present": "yes" if input_dir and (input_dir / "msgstore.db").is_file() else "no",
+                "wa_db_present": "yes" if wa_db else "no",
+                "media_folder_present": "yes" if media_dir else "no",
+                "generated_file_count": 0,
+                "warnings": warnings,
+                "error": res.get("stderr", "Unknown error")
+            }
         )
         
     return res

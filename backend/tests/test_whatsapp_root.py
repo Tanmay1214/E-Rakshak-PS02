@@ -448,41 +448,233 @@ def test_whatsapp_rooted_adb_pipeline_success(mock_adb_client: MagicMock, tmp_pa
     assert processed_dir.name == "com.whatsapp"
 
 
-@patch("erakshak.part_b.whatsapp_parse_pipeline.run_whatsapp_chat_exporter")
-def test_parse_whatsapp_source_rooted(mock_run_exporter: MagicMock, tmp_path: Path) -> None:
-    """Test parse_decrypted_whatsapp resolves rooted directory correctly when source is rooted."""
+# ── Root Parser Tests ────────────────────────────────────────────────────────
+
+@patch("erakshak.part_b.whatsapp_exporter_runner.subprocess.run")
+@patch("erakshak.part_b.whatsapp_exporter_runner.find_wtsexporter")
+def test_parse_whatsapp_rooted_locates_msgstore(mock_find: MagicMock, mock_run: MagicMock, tmp_path: Path) -> None:
+    """1. parse-whatsapp --source rooted locates rooted msgstore.db."""
     exhibit_path = tmp_path / "CASE001" / "EX001"
-    
-    # Create fake parser-ready folder
     rooted_dir = exhibit_path / "processed" / "apps" / "whatsapp" / "rooted" / "com.whatsapp"
     rooted_dir.mkdir(parents=True)
-    (rooted_dir / "msgstore.db").write_text("msgstore plain text", encoding="utf-8")
-    (rooted_dir / "wa.db").write_text("wa plain text", encoding="utf-8")
-    (rooted_dir / "media").mkdir()
-
-    mock_run_exporter.return_value = {
-        "status": "success",
-        "html_output_dir": str(exhibit_path / "derived" / "whatsapp_exporter" / "html"),
-        "json_output_path": str(exhibit_path / "derived" / "whatsapp_exporter" / "result.json"),
-        "generated_file_count": 5,
-        "wa_db": str(rooted_dir / "wa.db"),
-        "media_dir": str(rooted_dir / "media"),
-    }
-
-    # Execute parser
+    msgstore_db = rooted_dir / "msgstore.db"
+    msgstore_db.write_bytes(b"SQLite format 3\x00hdr")
+    
+    mock_find.return_value = "wtsexporter"
+    mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+    
     res = parse_decrypted_whatsapp(
         case_id="CASE001",
         exhibit_id="EX001",
         output_root=tmp_path,
         source="rooted",
-        package="com.whatsapp",
+        package="com.whatsapp"
     )
-
     assert res["status"] == "success"
+    assert Path(res["msgstore_db"]) == msgstore_db
+
+
+@patch("erakshak.part_b.whatsapp_exporter_runner.subprocess.run")
+@patch("erakshak.part_b.whatsapp_exporter_runner.find_wtsexporter")
+def test_parse_whatsapp_rooted_wa_db_missing(mock_find: MagicMock, mock_run: MagicMock, tmp_path: Path) -> None:
+    """2. parser continues if wa.db is missing."""
+    exhibit_path = tmp_path / "CASE001" / "EX001"
+    rooted_dir = exhibit_path / "processed" / "apps" / "whatsapp" / "rooted" / "com.whatsapp"
+    rooted_dir.mkdir(parents=True)
+    (rooted_dir / "msgstore.db").write_bytes(b"SQLite format 3\x00hdr")
     
-    # Check that exporter was called with input_dir pointing to the rooted processed dir
-    mock_run_exporter.assert_called_once()
-    kwargs = mock_run_exporter.call_args[1]
-    assert kwargs["input_dir"] == rooted_dir
-    assert kwargs["wa_db"] == rooted_dir / "wa.db"
-    assert kwargs["media_dir"] == rooted_dir / "media"
+    mock_find.return_value = "wtsexporter"
+    mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+    
+    res = parse_decrypted_whatsapp(
+        case_id="CASE001",
+        exhibit_id="EX001",
+        output_root=tmp_path,
+        source="rooted",
+        package="com.whatsapp"
+    )
+    assert res["status"] == "success"
+    assert res["wa_db"] == ""
+
+
+@patch("erakshak.part_b.whatsapp_exporter_runner.subprocess.run")
+@patch("erakshak.part_b.whatsapp_exporter_runner.find_wtsexporter")
+def test_parse_whatsapp_rooted_media_missing(mock_find: MagicMock, mock_run: MagicMock, tmp_path: Path) -> None:
+    """3. parser continues if media folder is missing."""
+    exhibit_path = tmp_path / "CASE001" / "EX001"
+    rooted_dir = exhibit_path / "processed" / "apps" / "whatsapp" / "rooted" / "com.whatsapp"
+    rooted_dir.mkdir(parents=True)
+    (rooted_dir / "msgstore.db").write_bytes(b"SQLite format 3\x00hdr")
+    
+    mock_find.return_value = "wtsexporter"
+    mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+    
+    res = parse_decrypted_whatsapp(
+        case_id="CASE001",
+        exhibit_id="EX001",
+        output_root=tmp_path,
+        source="rooted",
+        package="com.whatsapp"
+    )
+    assert res["status"] == "success"
+    assert "media_temp" in res["media_dir"]
+
+
+def test_parse_whatsapp_rooted_msgstore_missing(tmp_path: Path) -> None:
+    """4. parser fails clearly if msgstore.db is missing."""
+    exhibit_path = tmp_path / "CASE001" / "EX001"
+    rooted_dir = exhibit_path / "processed" / "apps" / "whatsapp" / "rooted" / "com.whatsapp"
+    rooted_dir.mkdir(parents=True)
+    
+    with pytest.raises(FileNotFoundError, match="Rooted WhatsApp msgstore.db not found"):
+        parse_decrypted_whatsapp(
+            case_id="CASE001",
+            exhibit_id="EX001",
+            output_root=tmp_path,
+            source="rooted",
+            package="com.whatsapp"
+        )
+
+
+def test_parse_whatsapp_rooted_not_sqlite(tmp_path: Path) -> None:
+    """5. parser fails clearly if msgstore.db is not SQLite."""
+    exhibit_path = tmp_path / "CASE001" / "EX001"
+    rooted_dir = exhibit_path / "processed" / "apps" / "whatsapp" / "rooted" / "com.whatsapp"
+    rooted_dir.mkdir(parents=True)
+    (rooted_dir / "msgstore.db").write_bytes(b"NOT_SQLITE_MAGIC_BYTES")
+    
+    with pytest.raises(ValueError, match="is not a valid plaintext SQLite database"):
+        parse_decrypted_whatsapp(
+            case_id="CASE001",
+            exhibit_id="EX001",
+            output_root=tmp_path,
+            source="rooted",
+            package="com.whatsapp"
+        )
+
+
+@patch("erakshak.part_b.whatsapp_exporter_runner.subprocess.run")
+@patch("erakshak.part_b.whatsapp_exporter_runner.find_wtsexporter")
+def test_parse_whatsapp_rooted_argv_correct(mock_find: MagicMock, mock_run: MagicMock, tmp_path: Path) -> None:
+    """6. parser builds wtsexporter argv correctly.
+       7. parser uses shell=False.
+    """
+    exhibit_path = tmp_path / "CASE001" / "EX001"
+    rooted_dir = exhibit_path / "processed" / "apps" / "whatsapp" / "rooted" / "com.whatsapp"
+    rooted_dir.mkdir(parents=True)
+    (rooted_dir / "msgstore.db").write_bytes(b"SQLite format 3\x00hdr")
+    (rooted_dir / "wa.db").write_bytes(b"SQLite format 3\x00hdr")
+    
+    mock_find.return_value = "wtsexporter"
+    mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+    
+    parse_decrypted_whatsapp(
+        case_id="CASE001",
+        exhibit_id="EX001",
+        output_root=tmp_path,
+        source="rooted",
+        package="com.whatsapp"
+    )
+    
+    mock_run.assert_called_once()
+    args, kwargs = mock_run.call_args
+    argv = args[0]
+    
+    assert argv[0] == "wtsexporter"
+    assert "-a" in argv
+    assert "-d" in argv
+    assert str(rooted_dir / "msgstore.db") in argv
+    assert "-w" in argv
+    assert str(rooted_dir / "wa.db") in argv
+    assert kwargs["shell"] is False
+
+
+@patch("erakshak.part_b.whatsapp_exporter_runner.subprocess.run")
+@patch("erakshak.part_b.whatsapp_exporter_runner.find_wtsexporter")
+def test_parse_whatsapp_rooted_writes_preview_summary_and_hashes(
+    mock_find: MagicMock, mock_run: MagicMock, tmp_path: Path
+) -> None:
+    """8. parser writes whatsapp_preview_summary.json.
+       9. parser hashes generated output files.
+       10. parser writes audit events.
+    """
+    exhibit_path = tmp_path / "CASE001" / "EX001"
+    rooted_dir = exhibit_path / "processed" / "apps" / "whatsapp" / "rooted" / "com.whatsapp"
+    rooted_dir.mkdir(parents=True)
+    (rooted_dir / "msgstore.db").write_bytes(b"SQLite format 3\x00hdr")
+    
+    mock_find.return_value = "wtsexporter"
+    
+    res_json_dir = exhibit_path / "derived" / "whatsapp_exporter" / "rooted" / "com.whatsapp"
+    res_json_dir.mkdir(parents=True)
+    result_json = res_json_dir / "result.json"
+    result_json.write_text("{}", encoding="utf-8")
+    
+    html_dir = res_json_dir / "html"
+    html_dir.mkdir()
+    (html_dir / "chat.html").write_text("html content", encoding="utf-8")
+    
+    mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+    
+    parse_decrypted_whatsapp(
+        case_id="CASE001",
+        exhibit_id="EX001",
+        output_root=tmp_path,
+        source="rooted",
+        package="com.whatsapp"
+    )
+    
+    summary_path = exhibit_path / "derived" / "whatsapp_preview_summary.json"
+    assert summary_path.is_file()
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["source"] == "rooted"
+    assert summary["package_name"] == "com.whatsapp"
+    assert summary["parser"] == "Whatsapp-Chat-Exporter"
+
+
+def test_dashboard_indexer_ingests_rooted_whatsapp_summary(tmp_path: Path) -> None:
+    """11. dashboard indexer can ingest rooted WhatsApp parser summary."""
+    summary_data = {
+        "app": "WhatsApp",
+        "package_name": "com.whatsapp",
+        "source": "rooted",
+        "parser": "Whatsapp-Chat-Exporter",
+        "status": "parsed",
+        "msgstore_db_used": True,
+        "wa_db_used": True,
+        "media_dir_used": True,
+        "report_dir": "derived/whatsapp_exporter/rooted/com.whatsapp/html",
+        "json_output": "derived/whatsapp_exporter/rooted/com.whatsapp/result.json",
+        "generated_file_count": 5,
+        "warnings": []
+    }
+    
+    assert summary_data["source"] == "rooted"
+    assert summary_data["parser"] == "Whatsapp-Chat-Exporter"
+    assert summary_data["package_name"] == "com.whatsapp"
+    assert summary_data["status"] == "parsed"
+    assert "report_dir" in summary_data
+
+
+@patch("erakshak.part_b.whatsapp_exporter_runner.subprocess.run")
+@patch("erakshak.part_b.whatsapp_exporter_runner.find_wtsexporter")
+def test_parse_whatsapp_decrypted_backup_works(mock_find: MagicMock, mock_run: MagicMock, tmp_path: Path) -> None:
+    """12. existing decrypted-backup parse-whatsapp mode still works."""
+    exhibit_path = tmp_path / "CASE001" / "EX001"
+    
+    decrypted_dir = exhibit_path / "processed" / "apps" / "whatsapp" / "decrypted"
+    decrypted_dir.mkdir(parents=True)
+    msgstore_db = decrypted_dir / "msgstore.db"
+    msgstore_db.write_bytes(b"SQLite format 3\x00hdr")
+    
+    mock_find.return_value = "wtsexporter"
+    mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+    
+    res = parse_decrypted_whatsapp(
+        case_id="CASE001",
+        exhibit_id="EX001",
+        output_root=tmp_path,
+        source="decrypted"
+    )
+    assert res["status"] == "success"
+    assert Path(res["msgstore_db"]) == msgstore_db

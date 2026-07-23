@@ -116,33 +116,52 @@ def run_whatsapp_chat_exporter(
     time_offset: Optional[int] = None,
     filter_date: Optional[str] = None,
     filter_date_format: Optional[str] = None,
-    timeout_seconds: int = 900
+    timeout_seconds: int = 900,
+    source: Optional[str] = None,
+    package: Optional[str] = "com.whatsapp"
 ) -> dict[str, Any]:
     """Runs the wtsexporter CLI tool."""
     case_folder = Path(output_root) / case_id / exhibit_id
     
-    # Resolve msgstore.db
-    if input_dir is not None:
+    # Resolve msgstore.db depending on source type
+    if source == "rooted":
+        if not package:
+            package = "com.whatsapp"
+        if input_dir is None:
+            input_dir = case_folder / "processed" / "apps" / "whatsapp" / "rooted" / package
+        
         input_dir = Path(input_dir)
         msgstore_db = input_dir / "msgstore.db"
         if not msgstore_db.is_file():
-            raise RuntimeError(f"msgstore.db not found in specified input directory: {input_dir}")
+            raise FileNotFoundError("Rooted WhatsApp msgstore.db not found. Run acquire-whatsapp-root or import-whatsapp-root first.")
         if not is_sqlite_database(msgstore_db):
-            raise RuntimeError(f"msgstore.db in specified input directory is not a valid SQLite database.")
+            raise ValueError("Rooted WhatsApp msgstore.db is not a valid plaintext SQLite database.")
+        
+        if wa_db is None and (input_dir / "wa.db").is_file():
+            wa_db = input_dir / "wa.db"
+        if media_dir is None and (input_dir / "media").is_dir():
+            media_dir = input_dir / "media"
+            
+        html_output_dir = case_folder / "derived" / "whatsapp_exporter" / "rooted" / package / "html"
+        json_output_path = case_folder / "derived" / "whatsapp_exporter" / "rooted" / package / "result.json"
     else:
-        artifacts = locate_whatsapp_artifacts(case_folder)
-        msgstore_db = artifacts["msgstore_db"]
-        if wa_db is None:
-            wa_db = artifacts["wa_db"]
-        if media_dir is None:
-            media_dir = artifacts["media_dir"]
-
-    # Target folders
-    html_output_dir = case_folder / "derived" / "whatsapp_exporter" / "html"
-    html_output_dir.mkdir(parents=True, exist_ok=True)
-    
-    json_output_path = case_folder / "derived" / "whatsapp_exporter" / "result.json"
-    json_output_path.parent.mkdir(parents=True, exist_ok=True)
+        if input_dir is not None:
+            input_dir = Path(input_dir)
+            msgstore_db = input_dir / "msgstore.db"
+            if not msgstore_db.is_file():
+                raise RuntimeError(f"msgstore.db not found in specified input directory: {input_dir}")
+            if not is_sqlite_database(msgstore_db):
+                raise RuntimeError(f"msgstore.db in specified input directory is not a valid SQLite database.")
+        else:
+            artifacts = locate_whatsapp_artifacts(case_folder)
+            msgstore_db = artifacts["msgstore_db"]
+            if wa_db is None:
+                wa_db = artifacts["wa_db"]
+            if media_dir is None:
+                media_dir = artifacts["media_dir"]
+                
+        html_output_dir = case_folder / "derived" / "whatsapp_exporter" / "html"
+        json_output_path = case_folder / "derived" / "whatsapp_exporter" / "result.json"
     
     # Enforce local derived directory for media/vcards/thumbnails to prevent root folder clutter
     if media_dir is None:
