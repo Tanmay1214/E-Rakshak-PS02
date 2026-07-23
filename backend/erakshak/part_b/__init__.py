@@ -6,6 +6,6 @@ separate from the generic Part A acquisition pipeline.
 Supported apps:
 - WhatsApp: Key capture, decryption, database staging (existing).
 - Telegram: Package detection, database group pulling, shared media inventory (Phase B.2.1).
-- Signal: Planned for a later phase.
+- Signal: Package detection, database group pulling, shared media inventory, conservative parsing.
 """
 from __future__ import annotations

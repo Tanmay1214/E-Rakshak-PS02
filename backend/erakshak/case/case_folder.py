@@ -47,6 +47,7 @@ class CaseFolder:
             self.raw_media_dir,
             self.raw_collector_dir,
             self.raw_apps_telegram_dir,
+            self.raw_apps_signal_dir,
             self.derived_dir,
             self.hashes_dir,
         ]
@@ -85,6 +86,11 @@ class CaseFolder:
     def raw_apps_telegram_dir(self) -> Path:
         """Directory for raw acquired Telegram database groups."""
         return self.raw_apps_dir / "telegram"
+
+    @property
+    def raw_apps_signal_dir(self) -> Path:
+        """Directory for raw acquired Signal database groups."""
+        return self.raw_apps_dir / "signal"
 
     @property
     def derived_dir(self) -> Path:

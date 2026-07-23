@@ -459,6 +459,97 @@ def cmd_telegram_acquire(args: argparse.Namespace) -> None:
         sys.exit(0)
 
 
+def cmd_signal_acquire(args: argparse.Namespace) -> None:
+    """Run Signal Android acquisition and parsing pipeline."""
+    print_banner()
+    start_time = datetime.now(timezone.utc)
+    print(f"[*] Signal MVP - Case: {args.case}  Exhibit: {args.exhibit}")
+    print(f"[*] Started at {start_time.isoformat()}")
+
+    adb_path = getattr(args, "adb_path", "adb")
+    serial = _resolve_serial(args.serial, adb_path=adb_path)
+    output_root = Path(args.output).resolve()
+
+    case_folder = CaseFolder(output_root, args.case, args.exhibit)
+    case_path = case_folder.create()
+
+    audit_path = case_path / "acquisition" / "audit.jsonl"
+    manifest_path = case_path / "acquisition" / "acquisition_manifest.jsonl"
+    sha256sums_path = case_path / "hashes" / "sha256sums.txt"
+    sha256sums_path.parent.mkdir(parents=True, exist_ok=True)
+
+    audit = AuditLogger(audit_path, args.case, args.exhibit)
+    audit_path.touch(exist_ok=True)
+    manifest = ManifestWriter(manifest_path, sha256sums_path, args.case, args.exhibit)
+    client = ADBClient(serial, audit, adb_path)
+
+    from erakshak.part_b.signal_pipeline import run_signal_pipeline
+
+    signal_db_key = None
+    if getattr(args, "signal_db_key", None):
+        signal_db_key = args.signal_db_key.strip()
+    if getattr(args, "signal_db_key_file", None):
+        try:
+            signal_db_key = Path(args.signal_db_key_file).read_text(encoding="utf-8").strip().splitlines()[0]
+        except Exception as exc:
+            print(f"[ERROR] Could not read --signal-db-key-file: {exc}")
+            sys.exit(1)
+
+    print("\n" + "=" * 60)
+    print("  SIGNAL ACQUISITION & PARSING")
+    print("=" * 60)
+
+    summary = run_signal_pipeline(
+        adb=client,
+        case_folder=case_folder,
+        manifest=manifest,
+        audit=audit,
+        signal_db_key=signal_db_key,
+        auto_extract_key=getattr(args, "signal_auto_key", False),
+    )
+
+    end_time = datetime.now(timezone.utc)
+    elapsed = (end_time - start_time).total_seconds()
+
+    acq = summary.get("acquisition", {})
+    pars = summary.get("parsing", {})
+
+    print("\n" + "=" * 60)
+    print("  SIGNAL MVP FINAL SUMMARY")
+    print("=" * 60)
+    print(f"  Packages found    : {len(acq.get('packages_found', []))}")
+    print(f"  Packages missing  : {len(acq.get('packages_not_found', []))}")
+    print(f"  Databases acquired: {len(pars.get('parsed_dbs', [])) + len(pars.get('unsupported_dbs', []))}")
+    print(f"  Parsed successfully: {len(pars.get('parsed_dbs', []))}")
+    print(f"  Unsupported schemas: {len(pars.get('unsupported_dbs', []))}")
+    print(f"  Extracted recipients: {pars.get('total_recipients', 0)}")
+    print(f"  Extracted threads : {pars.get('total_threads', 0)}")
+    print(f"  Extracted messages: {pars.get('total_messages', 0)}")
+    key_info = summary.get("key_extraction", {})
+    if key_info.get("attempted"):
+        print(f"  Auto key extracted: {'yes' if key_info.get('success') else 'no'}")
+    print(f"  Output directory  : {summary.get('output_dir', 'N/A')}")
+    print(f"  Elapsed time      : {elapsed:.1f}s")
+
+    warnings = acq.get("warnings", []) + pars.get("warnings", [])
+    errors = acq.get("errors", []) + pars.get("errors", [])
+    if warnings:
+        print("  --- Warnings ---")
+        for w in warnings:
+            print(f"    [WARN] {w}")
+    if errors:
+        print("  --- Errors ---")
+        for e in errors:
+            print(f"    [ERROR] {e}")
+
+    print("=" * 60)
+    if errors:
+        print("[COMPLETED WITH ERRORS] Signal MVP finished.\n")
+        sys.exit(1)
+    print("[SUCCESS] Signal MVP finished.\n")
+    sys.exit(0)
+
+
 def cmd_verify(args: argparse.Namespace) -> None:
     """Verify SHA-256 integrity of an existing case folder."""
     print_banner()
@@ -723,6 +814,18 @@ def build_parser() -> argparse.ArgumentParser:
     sp_tg.add_argument("--adb-path", default="adb", help="Path to ADB binary")
     sp_tg.set_defaults(func=cmd_telegram_acquire)
 
+    # ── signal-acquire ────────────────────────────────────────────────
+    sp_sig = subparsers.add_parser("signal-acquire", help="Run Signal Android MVP acquisition and parsing")
+    sp_sig.add_argument("--case", required=True, help="Case identifier")
+    sp_sig.add_argument("--exhibit", required=True, help="Exhibit identifier")
+    sp_sig.add_argument("--serial", default="auto", help="ADB device serial or 'auto'")
+    sp_sig.add_argument("--output", default="cases", help="Output root directory")
+    sp_sig.add_argument("--adb-path", default="adb", help="Path to ADB binary")
+    sp_sig.add_argument("--signal-db-key", default=None, help="Optional Signal SQLCipher DB key (prefer --signal-db-key-file)")
+    sp_sig.add_argument("--signal-db-key-file", default=None, help="Path to a file containing the Signal SQLCipher DB key")
+    sp_sig.add_argument("--signal-auto-key", action="store_true", help="Root-only: extract Signal DB key in memory before parsing")
+    sp_sig.set_defaults(func=cmd_signal_acquire)
+
     # ── whatsapp-auto-decrypt ─────────────────────────────────────────
     sp_wa_auto = subparsers.add_parser("whatsapp-auto-decrypt", help="Automated key capture and decrypt WhatsApp backup")
     sp_wa_auto.add_argument("--case", required=True, help="Case identifier")
@@ -755,7 +858,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp_wa_parse.add_argument("--vcard", default=None, help="Path to contacts.vcf file")
     sp_wa_parse.add_argument("--time-offset", type=int, default=None, help="Time offset in hours")
     sp_wa_parse.add_argument("--date", default=None, help="The date filter (e.g. '> YYYY-MM-DD' or 'YYYY-MM-DD - YYYY-MM-DD')")
-    sp_wa_parse.add_argument("--date-format", default="%Y-%m-%d", help="Format for the date filter (default: %Y-%m-%d)")
+    sp_wa_parse.add_argument("--date-format", default="%Y-%m-%d", help="Format for the date filter (default: %%Y-%%m-%%d)")
     sp_wa_parse.set_defaults(func=cmd_parse_whatsapp)
 
     # ── whatsapp-unified ──────────────────────────────────────────────
@@ -769,7 +872,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp_wa_un.add_argument("--hex-key", default=None, help="Optionally provide 64-character hex key manually to bypass UI automation")
     sp_wa_un.add_argument("--time-offset", type=int, default=None, help="Time offset in hours")
     sp_wa_un.add_argument("--date", default=None, help="The date filter (e.g. '> YYYY-MM-DD' or 'YYYY-MM-DD - YYYY-MM-DD')")
-    sp_wa_un.add_argument("--date-format", default="%Y-%m-%d", help="Format for the date filter (default: %Y-%m-%d)")
+    sp_wa_un.add_argument("--date-format", default="%Y-%m-%d", help="Format for the date filter (default: %%Y-%%m-%%d)")
     sp_wa_un.set_defaults(func=cmd_whatsapp_unified)
 
 

@@ -403,6 +403,60 @@ python -m erakshak.cli parse-whatsapp \
 
 ---
 
+### Step 7: Signal Android Chat Extraction (Rooted Device / Emulator)
+
+Signal stores chats inside its private app sandbox at `/data/data/org.thoughtcrime.securesms/`. Normal unrooted ADB cannot read this path. On an already-rooted device or rooted emulator, E-RAKSHAK can pull the Signal database, extract the SQLCipher key in memory, parse the database, and write simplified message JSONL in one command.
+
+```bash
+python -m erakshak.cli signal-acquire \
+    --case CASE001 \
+    --exhibit EXHIBIT001 \
+    --serial DEVICE_SERIAL \
+    --output cases \
+    --signal-auto-key
+```
+
+For the rooted test emulator used during development:
+
+```bash
+python -m erakshak.cli signal-acquire \
+    --case SIGDIR \
+    --exhibit ROOTEMU \
+    --serial emulator-5554 \
+    --output cases \
+    --signal-auto-key
+```
+
+Message output:
+
+```text
+cases/CASE001/EXHIBIT001/derived/apps/signal/org.thoughtcrime.securesms/databases_signal_messages.jsonl
+```
+
+Each message row is normalized to:
+
+```json
+{"date": "2026-07-23 19:18:53 UTC", "contact_name": "Alice", "received": false, "sent": true, "message": "Hey"}
+```
+
+- `sent: true` means the message was sent by the acquired phone.
+- `received: true` means the message was received by the acquired phone.
+- The raw Signal SQLCipher key is used in memory only and is not written to stdout, audit logs, manifests, or case output.
+- `--signal-auto-key` requires existing root access. It temporarily stages a small helper dex in Signal's `code_cache`, runs it as the Signal app user, and removes the helper after extraction.
+
+If you already have the Signal SQLCipher key from an authorized acquisition path, use:
+
+```bash
+python -m erakshak.cli signal-acquire \
+    --case CASE001 \
+    --exhibit EXHIBIT001 \
+    --serial DEVICE_SERIAL \
+    --output cases \
+    --signal-db-key-file /path/to/signal_db_key.txt
+```
+
+---
+
 ### Run Unit Tests
 
 ```bash
@@ -591,7 +645,7 @@ Android's sandbox prevents reading another app's private directory without root:
 | Telegram | `/data/data/org.telegram.messenger/` |
 | Signal | `/data/data/org.thoughtcrime.securesms/` |
 
-Part A does collect: installation status (version, permissions, install date) and shared media folders (`/sdcard/WhatsApp/Media/` — world-readable).
+Part A does collect: installation status (version, permissions, install date) and shared media folders (`/sdcard/WhatsApp/Media/` — world-readable). Part B can collect Signal private databases only from rooted devices, rooted emulators, imported filesystem images, or another authorized source that provides the database and key.
 
 ### Other Known Limitations
 
@@ -721,6 +775,8 @@ python -m erakshak.cli whatsapp-unified --case CASE001 --exhibit EXHIBIT001 --ou
 - Never bypasses lock screens or passcodes
 - Never communicates over the network (all data stays local)
 - Records every action in a tamper-evident audit log
+
+Rooted Part B commands are explicit exceptions to the Part A read-only model: they require an already-rooted target and may temporarily stage helper files to acquire app-private evidence. These helpers are removed after use and are documented in the command-specific sections above.
 
 **Unauthorized use may violate computer fraud, wiretapping, and privacy laws. Always obtain proper legal authorization before connecting to or acquiring data from any device.**
 

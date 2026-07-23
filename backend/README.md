@@ -326,7 +326,28 @@ These paths are protected by Linux DAC permissions (`rwx------`) and SELinux MAC
 - Shared media folders (e.g., `/sdcard/WhatsApp/Media/`) — these are world-readable
 - Account leads (e.g., phone numbers registered in account manager)
 
-**Part B (future)** will handle acquisition from rooted devices or imported filesystem images.
+**Part B** handles selected app-private acquisition paths from rooted devices, rooted emulators, imported filesystem images, or other authorized sources.
+
+#### Signal Rooted Acquisition
+
+On an already-rooted device or rooted emulator, Signal chats can be extracted and normalized in one command:
+
+```bash
+python -m erakshak.cli signal-acquire \
+    --case CASE001 \
+    --exhibit EXHIBIT001 \
+    --serial DEVICE_SERIAL \
+    --output cases \
+    --signal-auto-key
+```
+
+The message JSONL is written to:
+
+```text
+cases/CASE001/EXHIBIT001/derived/apps/signal/org.thoughtcrime.securesms/databases_signal_messages.jsonl
+```
+
+Rows contain only the normalized fields `date`, `contact_name`, `received`, `sent`, and `message`. `sent` and `received` are booleans describing whether the acquired phone sent or received the message. The Signal database key is extracted in memory and is not written to the case output.
 
 ---
 
@@ -420,7 +441,9 @@ E-RAKSHAK makes the following guarantees:
 - ✅ No persistence mechanisms on the device
 - ✅ No covert data exfiltration
 - ✅ No network communication (all data stays local)
-- ✅ No encryption key extraction or bypass
+- ✅ No encryption key extraction or bypass in Part A
+
+Rooted Part B commands are explicit, operator-selected exceptions. For example, `signal-acquire --signal-auto-key` requires existing root access, temporarily stages a helper dex in Signal's app-private `code_cache`, runs it as the Signal app user, and removes it after extracting the database key in memory.
 
 ---
 
