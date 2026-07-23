@@ -90,6 +90,21 @@ def detect_root_access(adb_client: Any, serial: str) -> dict[str, Any]:
     except Exception as e:
         warnings.append(f"su -c id failed with exception: {str(e)}")
 
+    # Check 3: adb shell su 0 id (for emulator root support)
+    try:
+        su0_res = adb_client.shell(["su", "0", "id"], audit_action="detect_root_su_0")
+        if su0_res.ok and "uid=0(root)" in su0_res.stdout:
+            return {
+                "root_available": True,
+                "method": "su_0",
+                "raw_id": su0_res.stdout.strip(),
+                "warnings": warnings,
+            }
+        elif not su0_res.ok and su0_res.stderr:
+            warnings.append(f"su 0 id failed: {su0_res.stderr.strip()}")
+    except Exception as e:
+        warnings.append(f"su 0 id failed with exception: {str(e)}")
+
     raw_id = ""
     return {
         "root_available": False,
@@ -311,6 +326,8 @@ def acquire_whatsapp_rooted_device(
         check_cmd = ["ls", "-d", remote_path]
         if not is_sdcard and root_method == "su":
             check_cmd = ["su", "-c", f"ls -d {remote_path}"]
+        elif not is_sdcard and root_method == "su_0":
+            check_cmd = ["su", "0", f"ls -d {remote_path}"]
 
         check_res = adb_client.shell(check_cmd)
         if not check_res.ok or "no such" in check_res.stderr.lower() or "not found" in check_res.stderr.lower():
@@ -336,6 +353,12 @@ def acquire_whatsapp_rooted_device(
                     cmd += ["-s", serial]
                 cmd += ["exec-out", "su", "-c", f"tar -cf - {remote_path} 2>/dev/null"]
                 method_used = "exec_out_tar_su"
+            elif root_method == "su_0":
+                cmd = [adb_path]
+                if serial and serial != "auto":
+                    cmd += ["-s", serial]
+                cmd += ["exec-out", "su", "0", f"tar -cf - {remote_path} 2>/dev/null"]
+                method_used = "exec_out_tar_su_0"
             else:
                 cmd = [adb_path]
                 if serial and serial != "auto":

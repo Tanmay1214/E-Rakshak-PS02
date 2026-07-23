@@ -136,18 +136,30 @@ def run_preflight(
         else "unknown"
     )
 
-    # ── su -c id  (root detection only – never runs adb root) ────────
-    su_result: ADBResult = adb.shell(
-        ["su", "-c", "id"], timeout=5, audit_action="preflight_root_check"
-    )
-    root_available: bool | str
-    if su_result.return_code == 0 and "uid=0" in su_result.stdout:
+    # ── Check root access natively ───────────────────────────────────
+    id_result: ADBResult = adb.shell(["id"], timeout=5, audit_action="preflight_root_id")
+    
+    root_available: bool | str = False
+    if id_result.return_code == 0 and "uid=0" in id_result.stdout:
         root_available = True
-    elif su_result.timed_out:
-        root_available = "unknown"
-        warnings.append("Root check timed out")
     else:
-        root_available = False
+        # Try su -c id (standard rooted devices)
+        su_result: ADBResult = adb.shell(
+            ["su", "-c", "id"], timeout=5, audit_action="preflight_root_su"
+        )
+        if su_result.return_code == 0 and "uid=0" in su_result.stdout:
+            root_available = True
+        elif su_result.timed_out:
+            warnings.append("Root check su -c id timed out")
+        else:
+            # Try su 0 id (Android Studio root emulators)
+            su0_result: ADBResult = adb.shell(
+                ["su", "0", "id"], timeout=5, audit_action="preflight_root_su_0"
+            )
+            if su0_result.return_code == 0 and "uid=0" in su0_result.stdout:
+                root_available = True
+            elif su0_result.timed_out:
+                warnings.append("Root check su 0 id timed out")
 
     # ── Assemble preflight data ──────────────────────────────────────
     host_timestamp_utc: str = datetime.now(timezone.utc).isoformat()
