@@ -674,6 +674,17 @@ def cmd_parse_whatsapp(args: argparse.Namespace) -> None:
     media_dir = Path(args.media) if args.media else None
     vcard_path = Path(args.vcard) if args.vcard else None
     time_offset = int(args.time_offset) if args.time_offset is not None else None
+    
+    source = getattr(args, "source", None)
+    package = getattr(args, "package", "com.whatsapp")
+
+    # For --source rooted, ensure the processed folder exists
+    if source == "rooted" and input_dir is None:
+        rooted_dir = Path(args.output) / args.case / args.exhibit / "processed" / "apps" / "whatsapp" / "rooted" / package
+        if not rooted_dir.is_dir():
+            print(f"\n[ERROR] Rooted WhatsApp parser-ready folder not found. Run acquire-whatsapp-root or import-whatsapp-root first.\n")
+            sys.exit(1)
+        input_dir = rooted_dir
 
     try:
         res = parse_decrypted_whatsapp(
@@ -686,7 +697,9 @@ def cmd_parse_whatsapp(args: argparse.Namespace) -> None:
             vcard_path=vcard_path,
             time_offset=time_offset,
             filter_date=args.date,
-            filter_date_format=args.date_format
+            filter_date_format=args.date_format,
+            source=source,
+            package=package
         )
 
         
@@ -757,6 +770,109 @@ def cmd_whatsapp_unified(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_acquire_whatsapp_root(args: argparse.Namespace) -> None:
+    """Acquire WhatsApp data from a rooted Android device over ADB."""
+    print_banner()
+    print("[*] Initiating WhatsApp Root Acquisition Pipeline...")
+
+    from erakshak.part_b.whatsapp_root_pipeline import run_whatsapp_root_adb_pipeline
+
+    output_root = Path(args.output).resolve()
+    serial = _resolve_serial(args.serial, adb_path=args.adb_path)
+    max_cache = int(args.max_cache_bytes) if args.max_cache_bytes is not None else None
+
+    try:
+        res = run_whatsapp_root_adb_pipeline(
+            case_id=args.case,
+            exhibit_id=args.exhibit,
+            serial=serial,
+            output_root=output_root,
+            package_name=args.package,
+            include_cache=args.include_cache,
+            include_files=args.include_files,
+            include_shared_media=args.include_shared_media,
+            max_cache_bytes=max_cache,
+            timeout_seconds=args.timeout_seconds,
+        )
+
+        if res["status"] == "success" or res["status"] == "partial":
+            summary = res.get("summary", {})
+            print("\n" + "=" * 50)
+            print("  WhatsApp Root Acquisition Successful" if res["status"] == "success" else "  WhatsApp Root Acquisition Completed with Warnings")
+            print("=" * 50)
+            print(f"  Package Name        : {summary.get('package_name')}")
+            print(f"  Databases Found     : {', '.join(summary.get('databases_found', []))}")
+            print(f"  Sidecars Found      : {', '.join(summary.get('sidecars_found', []))}")
+            print(f"  Key File Found      : {'Yes' if summary.get('key_file_found') else 'No'}")
+            print(f"  Media Found         : {'Yes' if summary.get('media_found') else 'No'}")
+            print(f"  Parser-Ready Path   : {summary.get('parser_ready_path')}")
+            print("=" * 50 + "\n")
+            
+            if res["warnings"]:
+                print("  --- Warnings ---")
+                for w in res["warnings"]:
+                    print(f"    [WARN] {w}")
+            sys.exit(0)
+        else:
+            err = res.get("error", "Acquisition failed.")
+            print(f"\n[ERROR] WhatsApp Root Acquisition Failed: {err}\n")
+            sys.exit(1)
+    except Exception as e:
+        print(f"\n[ERROR] WhatsApp Root Acquisition Failed: {str(e)}\n")
+        sys.exit(1)
+
+
+def cmd_import_whatsapp_root(args: argparse.Namespace) -> None:
+    """Import WhatsApp data from an acquired filesystem dump/folder."""
+    print_banner()
+    print("[*] Initiating WhatsApp Imported Filesystem Pipeline...")
+
+    from erakshak.part_b.whatsapp_root_pipeline import run_whatsapp_root_import_pipeline
+
+    import_root = Path(args.import_root).resolve()
+    if not import_root.is_dir():
+        print(f"\n[ERROR] Specified import root is not a directory: {import_root}\n")
+        sys.exit(1)
+
+    output_root = Path(args.output).resolve()
+
+    try:
+        res = run_whatsapp_root_import_pipeline(
+            case_id=args.case,
+            exhibit_id=args.exhibit,
+            import_root=import_root,
+            output_root=output_root,
+            package_name=args.package,
+        )
+
+        if res["status"] == "success" or res["status"] == "partial":
+            summary = res.get("summary", {})
+            print("\n" + "=" * 50)
+            print("  WhatsApp Import Successful" if res["status"] == "success" else "  WhatsApp Import Completed with Warnings")
+            print("=" * 50)
+            print(f"  Package Name        : {summary.get('package_name')}")
+            print(f"  Databases Found     : {', '.join(summary.get('databases_found', []))}")
+            print(f"  Sidecars Found      : {', '.join(summary.get('sidecars_found', []))}")
+            print(f"  Key File Found      : {'Yes' if summary.get('key_file_found') else 'No'}")
+            print(f"  Media Found         : {'Yes' if summary.get('media_found') else 'No'}")
+            print(f"  Parser-Ready Path   : {summary.get('parser_ready_path')}")
+            print("=" * 50 + "\n")
+
+            if res["warnings"]:
+                print("  --- Warnings ---")
+                for w in res["warnings"]:
+                    print(f"    [WARN] {w}")
+            sys.exit(0)
+        else:
+            err = res.get("error", "Import failed.")
+            print(f"\n[ERROR] WhatsApp Import Failed: {err}\n")
+            sys.exit(1)
+    except Exception as e:
+        print(f"\n[ERROR] WhatsApp Import Failed: {str(e)}\n")
+        sys.exit(1)
+
+
+
 
 # ═════════════════════════════════════════════════════════════════════
 # Argument parser
@@ -820,7 +936,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp_sig.add_argument("--exhibit", required=True, help="Exhibit identifier")
     sp_sig.add_argument("--serial", default="auto", help="ADB device serial or 'auto'")
     sp_sig.add_argument("--output", default="cases", help="Output root directory")
-    sp_sig.add_argument("--adb-path", default="adb", help="Path to ADB binary")
+    sp_sig.add_argument("--adb-path", default="adb", help="Path to ADB binary (default: adb)")
     sp_sig.add_argument("--signal-db-key", default=None, help="Optional Signal SQLCipher DB key (prefer --signal-db-key-file)")
     sp_sig.add_argument("--signal-db-key-file", default=None, help="Path to a file containing the Signal SQLCipher DB key")
     sp_sig.add_argument("--signal-auto-key", action="store_true", help="Root-only: extract Signal DB key in memory before parsing")
@@ -833,7 +949,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp_wa_auto.add_argument("--backup", required=True, help="Path to encrypted WhatsApp backup file")
     sp_wa_auto.add_argument("--output", default="cases", help="Output root directory")
     sp_wa_auto.add_argument("--serial", default="auto", help="ADB device serial or 'auto'")
-    sp_wa_auto.add_argument("--adb-path", default="adb", help="Path to ADB binary")
+    sp_wa_auto.add_argument("--adb-path", default="adb", help="Path to ADB binary (default: adb)")
     sp_wa_auto.set_defaults(func=cmd_whatsapp_auto_decrypt)
 
     # ── whatsapp-decrypt ──────────────────────────────────────────────
@@ -844,7 +960,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp_wa_dec.add_argument("--hex-key", required=True, help="64-character WhatsApp backup encryption key")
     sp_wa_dec.add_argument("--output", default="cases", help="Output root directory")
     sp_wa_dec.add_argument("--serial", default="auto", help="ADB device serial or 'auto'")
-    sp_wa_dec.add_argument("--adb-path", default="adb", help="Path to ADB binary")
+    sp_wa_dec.add_argument("--adb-path", default="adb", help="Path to ADB binary (default: adb)")
     sp_wa_dec.set_defaults(func=cmd_whatsapp_decrypt)
 
     # ── parse-whatsapp ────────────────────────────────────────────────
@@ -859,6 +975,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp_wa_parse.add_argument("--time-offset", type=int, default=None, help="Time offset in hours")
     sp_wa_parse.add_argument("--date", default=None, help="The date filter (e.g. '> YYYY-MM-DD' or 'YYYY-MM-DD - YYYY-MM-DD')")
     sp_wa_parse.add_argument("--date-format", default="%Y-%m-%d", help="Format for the date filter (default: %%Y-%%m-%%d)")
+    sp_wa_parse.add_argument("--source", choices=["decrypted", "rooted"], default="decrypted", help="Acquisition source type (default: decrypted)")
+    sp_wa_parse.add_argument("--package", choices=["com.whatsapp", "com.whatsapp.w4b"], default="com.whatsapp", help="WhatsApp package variant (default: com.whatsapp)")
     sp_wa_parse.set_defaults(func=cmd_parse_whatsapp)
 
     # ── whatsapp-unified ──────────────────────────────────────────────
@@ -874,6 +992,38 @@ def build_parser() -> argparse.ArgumentParser:
     sp_wa_un.add_argument("--date", default=None, help="The date filter (e.g. '> YYYY-MM-DD' or 'YYYY-MM-DD - YYYY-MM-DD')")
     sp_wa_un.add_argument("--date-format", default="%Y-%m-%d", help="Format for the date filter (default: %%Y-%%m-%%d)")
     sp_wa_un.set_defaults(func=cmd_whatsapp_unified)
+
+    # ── acquire-whatsapp-root ─────────────────────────────────────────
+    sp_wa_root = subparsers.add_parser("acquire-whatsapp-root", help="Acquire WhatsApp from a rooted Android device over ADB")
+    sp_wa_root.add_argument("--case", required=True, help="Case identifier")
+    sp_wa_root.add_argument("--exhibit", required=True, help="Exhibit identifier")
+    sp_wa_root.add_argument("--serial", default="auto", help="ADB device serial or 'auto'")
+    sp_wa_root.add_argument("--output", default="cases", help="Output root directory")
+    sp_wa_root.add_argument("--package", choices=["com.whatsapp", "com.whatsapp.w4b"], default="com.whatsapp", help="WhatsApp package variant (default: com.whatsapp)")
+    
+    # Boolean flags
+    sp_wa_root.add_argument("--include-cache", action="store_true", dest="include_cache", default=True, help="Include cache folder (default: true)")
+    sp_wa_root.add_argument("--no-include-cache", action="store_false", dest="include_cache", help="Exclude cache folder")
+    
+    sp_wa_root.add_argument("--include-files", action="store_true", dest="include_files", default=True, help="Include files folder (default: true)")
+    sp_wa_root.add_argument("--no-include-files", action="store_false", dest="include_files", help="Exclude files folder")
+    
+    sp_wa_root.add_argument("--include-shared-media", action="store_true", dest="include_shared_media", default=True, help="Include shared media folder (default: true)")
+    sp_wa_root.add_argument("--no-include-shared-media", action="store_false", dest="include_shared_media", help="Exclude shared media folder")
+    
+    sp_wa_root.add_argument("--max-cache-bytes", type=int, default=None, help="Maximum cache bytes allowed")
+    sp_wa_root.add_argument("--timeout-seconds", type=int, default=600, help="Command timeout in seconds (default: 600)")
+    sp_wa_root.add_argument("--adb-path", default="adb", help="Path to ADB binary (default: adb)")
+    sp_wa_root.set_defaults(func=cmd_acquire_whatsapp_root)
+
+    # ── import-whatsapp-root ──────────────────────────────────────────
+    sp_wa_import = subparsers.add_parser("import-whatsapp-root", help="Import WhatsApp data from a prior filesystem dump/folder")
+    sp_wa_import.add_argument("--case", required=True, help="Case identifier")
+    sp_wa_import.add_argument("--exhibit", required=True, help="Exhibit identifier")
+    sp_wa_import.add_argument("--import-root", required=True, help="Path to imported filesystem dump root")
+    sp_wa_import.add_argument("--output", default="cases", help="Output root directory")
+    sp_wa_import.add_argument("--package", choices=["com.whatsapp", "com.whatsapp.w4b"], default="com.whatsapp", help="WhatsApp package variant (default: com.whatsapp)")
+    sp_wa_import.set_defaults(func=cmd_import_whatsapp_root)
 
 
     return parser

@@ -29,7 +29,9 @@ def parse_decrypted_whatsapp(
     vcard_path: Optional[Path] = None,
     time_offset: Optional[int] = None,
     filter_date: Optional[str] = None,
-    filter_date_format: Optional[str] = None
+    filter_date_format: Optional[str] = None,
+    source: Optional[str] = None,
+    package: Optional[str] = "com.whatsapp"
 ) -> dict[str, Any]:
     """Executes the complete WhatsApp parsing and export pipeline."""
     exhibit_path = Path(output_root) / case_id / exhibit_id
@@ -37,6 +39,20 @@ def parse_decrypted_whatsapp(
     audit_path = acquisition_dir / "audit.jsonl"
     manifest_path = acquisition_dir / "acquisition_manifest.jsonl"
     sha256sums_path = exhibit_path / "hashes" / "sha256sums.txt"
+
+    if source == "rooted" and package and input_dir is None:
+        rooted_dir = exhibit_path / "processed" / "apps" / "whatsapp" / "rooted" / package
+        if rooted_dir.is_dir():
+            input_dir = rooted_dir
+            if wa_db is None and (rooted_dir / "wa.db").is_file():
+                wa_db = rooted_dir / "wa.db"
+            if media_dir is None and (rooted_dir / "media").is_dir():
+                media_dir = rooted_dir / "media"
+        else:
+            raise FileNotFoundError(
+                "Rooted WhatsApp parser-ready folder not found. Run acquire-whatsapp-root or import-whatsapp-root first."
+            )
+
 
     # 1. Start Audit
     append_audit_event(

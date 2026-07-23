@@ -764,6 +764,67 @@ python -m erakshak.cli whatsapp-unified --case CASE001 --exhibit EXHIBIT001 --ou
 
 ---
 
+## WhatsApp Root & Import Acquisition (Part B)
+
+E-RAKSHAK supports directly acquiring private app databases, key files, preferences, and media from rooted Android devices over ADB or imported forensic filesystem dumps (logical or physical extractions).
+
+### Rooted ADB Acquisition
+
+If the connected device is already rooted (either running `su` or with `adb root` access), you can run:
+
+```bash
+python -m erakshak.cli acquire-whatsapp-root --case CASE001 --exhibit EX001 --package com.whatsapp
+```
+
+**Parameters:**
+- `--case` (required): Case ID.
+- `--exhibit` (required): Exhibit ID.
+- `--package`: Package variant to acquire: `com.whatsapp` (default) or `com.whatsapp.w4b` (WhatsApp Business).
+- `--include-cache` / `--no-include-cache` (default: True): Whether to pull application cache files.
+- `--include-files` / `--no-include-files` (default: True): Whether to pull files directory (containing key files).
+- `--include-shared-media` / `--no-include-shared-media` (default: True): Whether to acquire `/sdcard` media folders.
+- `--max-cache-bytes` (default: None): Limit total cache bytes pulled.
+- `--timeout-seconds` (default: 600): Execution timeout.
+
+**What it does sequentially:**
+1. Checks root access non-destructively using `id` and `su -c id` (without running `adb root`).
+2. Detects if the target package (`com.whatsapp` or `com.whatsapp.w4b`) is installed.
+3. Performs a binary-safe `exec-out + tar` extraction (falling back to standard `adb pull` on failure) to copy private folders.
+4. Enforces strict member validation to block path traversal (`..`), symlinks, hardlinks, absolute paths, and Windows drive letters.
+5. Hashes every file, streams records to `acquisition/acquisition_manifest.jsonl`, and hashes to `hashes/sha256sums.txt`.
+6. Safe-logs key files: key contents are never logged; only metadata (hashes) is written to the audit log.
+7. Stages parser-ready files under `processed/apps/whatsapp/rooted/<package_name>/` and writes `derived/whatsapp_root_summary.json`.
+
+---
+
+### Imported Filesystem Acquisition
+
+If you have already acquired a logical/physical filesystem dump of the device, you can import it into the case:
+
+```bash
+python -m erakshak.cli import-whatsapp-root --case CASE001 --exhibit EX001 --import-root /path/to/extracted/dump --package com.whatsapp
+```
+
+**What it does sequentially:**
+1. Recursively searches the provided `import-root` folder to find private WhatsApp paths (`/data/data/com.whatsapp`) and external media (`/sdcard/WhatsApp`).
+2. Copies all databases, sidecars, files, preferences, and media into the raw exhibit directory.
+3. Records all copied files and handles missing files/directories by writing `not_present` manifest records.
+4. Stages the parsed files under `processed/apps/whatsapp/rooted/<package_name>/`.
+
+---
+
+### Parsing Root/Import Acquired Data
+
+Once acquired or imported, you can parse the plaintext databases and media directory directly using:
+
+```bash
+python -m erakshak.cli parse-whatsapp --case CASE001 --exhibit EX001 --source rooted --package com.whatsapp
+```
+
+This parses the staged database (`processed/apps/whatsapp/rooted/com.whatsapp/msgstore.db`) with contact enrichment (`wa.db`) and media mappings, generating derived HTML reports and JSON results under `derived/whatsapp_exporter/`.
+
+---
+
 ## Legal & Ethical Notice
 
 > [!IMPORTANT]
