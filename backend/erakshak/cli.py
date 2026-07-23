@@ -834,6 +834,51 @@ def cmd_whatsapp_root_unified(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_carve_whatsapp(args: argparse.Namespace) -> None:
+    """Carve deleted messages from WhatsApp database and WAL sidecars."""
+    print_banner()
+    print("[*] Initiating WhatsApp Forensic Carving Pipeline...")
+
+    from erakshak.part_b.whatsapp_carver import run_whatsapp_carver
+
+    output_root = Path(args.output).resolve()
+    serial = None
+    if args.serial and args.serial.lower() != "none":
+        try:
+            serial = _resolve_serial(args.serial, adb_path=args.adb_path)
+            print(f"[AUTO] Selected device: {serial}")
+        except Exception:
+            print("[INFO] No active ADB device resolved. Running carving offline on staged database.")
+
+    try:
+        res = run_whatsapp_carver(
+            case_id=args.case,
+            exhibit_id=args.exhibit,
+            output_root=output_root,
+            serial=serial,
+            package_name=args.package,
+            adb_path=args.adb_path
+        )
+
+        if res["status"] == "success":
+            print("\n" + "=" * 50)
+            print("  WhatsApp Forensic Carving Successful")
+            print("=" * 50)
+            print(f"  FTS index residues found    : {res['fts_residues_count']}")
+            print(f"  Slack candidates carved     : {res['slack_candidates_count']}")
+            print(f"  JSON report path            : {res['json_report']}")
+            print(f"  Text report path            : {res['txt_report']}")
+            print("=" * 50 + "\n")
+            sys.exit(0)
+        else:
+            err = res.get("error", "Carving failed.")
+            print(f"\n[ERROR] WhatsApp Carving Failed: {err}\n")
+            sys.exit(1)
+    except Exception as e:
+        print(f"\n[ERROR] WhatsApp Carving Failed: {str(e)}\n")
+        sys.exit(1)
+
+
 def cmd_acquire_whatsapp_root(args: argparse.Namespace) -> None:
     """Acquire WhatsApp data from a rooted Android device over ADB."""
     print_banner()
@@ -1111,6 +1156,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp_wa_root_un.add_argument("--timeout-seconds", type=int, default=600, help="Command timeout in seconds (default: 600)")
     sp_wa_root_un.add_argument("--adb-path", default="adb", help="Path to ADB binary (default: adb)")
     sp_wa_root_un.set_defaults(func=cmd_whatsapp_root_unified)
+
+    # ── carve-whatsapp ────────────────────────────────────────────────
+    sp_wa_carve = subparsers.add_parser("carve-whatsapp", help="Carve deleted WhatsApp messages from database slack space and FTS index residues")
+    sp_wa_carve.add_argument("--case", required=True, help="Case identifier")
+    sp_wa_carve.add_argument("--exhibit", required=True, help="Exhibit identifier")
+    sp_wa_carve.add_argument("--serial", default="auto", help="ADB device serial, 'auto', or 'none'")
+    sp_wa_carve.add_argument("--output", default="cases", help="Output root directory")
+    sp_wa_carve.add_argument("--package", choices=["com.whatsapp", "com.whatsapp.w4b"], default="com.whatsapp", help="WhatsApp package variant (default: com.whatsapp)")
+    sp_wa_carve.add_argument("--adb-path", default="adb", help="Path to ADB binary (default: adb)")
+    sp_wa_carve.set_defaults(func=cmd_carve_whatsapp)
 
     return parser
 

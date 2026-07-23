@@ -730,3 +730,63 @@ def test_whatsapp_root_unified_pipeline_success(
         source="rooted",
         package="com.whatsapp"
     )
+
+
+# ── Carver Pipeline Tests ───────────────────────────────────────────────────
+
+@patch("erakshak.part_b.whatsapp_carver.run_online_backup_on_device")
+@patch("erakshak.part_b.whatsapp_carver.hash_file")
+def test_whatsapp_carver_pipeline_success(
+    mock_hash: MagicMock, mock_backup: MagicMock, tmp_path: Path
+) -> None:
+    """Test run_whatsapp_carver successfully processes SQLite and WAL files."""
+    exhibit_path = tmp_path / "CASE001" / "EX001"
+    local_db_dir = exhibit_path / "processed" / "apps" / "whatsapp" / "rooted" / "com.whatsapp"
+    local_db_dir.mkdir(parents=True)
+    
+    msgstore_db = local_db_dir / "msgstore.db"
+    
+    # Setup test sqlite DB
+    conn = sqlite3.connect(str(msgstore_db))
+    conn.execute("CREATE TABLE message (_id INTEGER, text_data TEXT)")
+    conn.execute("INSERT INTO message VALUES (1, 'active message one')")
+    conn.execute("INSERT INTO message VALUES (2, 'active message two')")
+    conn.execute("CREATE TABLE message_ftsv2_content (docid INTEGER, c0content TEXT, c1fts_jid TEXT, c2fts_namespace TEXT)")
+    conn.execute("INSERT INTO message_ftsv2_content VALUES (1, 'active message one', '123', '')")
+    conn.execute("INSERT INTO message_ftsv2_content VALUES (3, 'deleted message carved from fts', '123', '')")
+    conn.commit()
+    conn.close()
+    
+    with open(msgstore_db, "ab") as f:
+        f.write(b"\x00\x00some carved deleted message text from slack space\x00\x00")
+        
+    mock_hash.return_value = "fake_sha256"
+    mock_backup.return_value = msgstore_db
+    
+    from erakshak.part_b.whatsapp_carver import run_whatsapp_carver
+    res = run_whatsapp_carver(
+        case_id="CASE001",
+        exhibit_id="EX001",
+        output_root=tmp_path,
+        serial="mock_serial"
+    )
+    
+    assert res["status"] == "success"
+    assert res["fts_residues_count"] == 1
+    assert res["slack_candidates_count"] > 0
+    
+    report_json = Path(res["json_report"])
+    report_txt = Path(res["txt_report"])
+    assert report_json.is_file()
+    assert report_txt.is_file()
+    
+    report_data = json.loads(report_json.read_text(encoding="utf-8"))
+    assert report_data["active_message_count"] == 2
+    assert len(report_data["fts_deleted_messages"]) == 1
+    assert report_data["fts_deleted_messages"][0]["text"] == "deleted message carved from fts"
+    
+    manifest_file = exhibit_path / "acquisition" / "acquisition_manifest.jsonl"
+    assert manifest_file.is_file()
+    manifest_lines = [json.loads(l) for l in manifest_file.read_text(encoding="utf-8").splitlines()]
+    classes = [r["artifact_class"] for r in manifest_lines]
+    assert "whatsapp_carved_output" in classes
