@@ -770,6 +770,70 @@ def cmd_whatsapp_unified(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_whatsapp_root_unified(args: argparse.Namespace) -> None:
+    """Unified WhatsApp root pipeline: acquire private data and parse chats."""
+    print_banner()
+    print("[*] Initiating Unified WhatsApp Root Acquisition & Parsing Pipeline...")
+
+    from erakshak.part_b.whatsapp_root_pipeline import run_whatsapp_root_adb_pipeline
+    from erakshak.part_b.whatsapp_parse_pipeline import parse_decrypted_whatsapp
+
+    output_root = Path(args.output).resolve()
+    serial = _resolve_serial(args.serial, adb_path=args.adb_path)
+    max_cache = int(args.max_cache_bytes) if args.max_cache_bytes is not None else None
+
+    # 1. Run acquisition
+    acq_res = run_whatsapp_root_adb_pipeline(
+        case_id=args.case,
+        exhibit_id=args.exhibit,
+        serial=serial,
+        output_root=output_root,
+        package_name=args.package,
+        include_cache=args.include_cache,
+        include_files=args.include_files,
+        include_shared_media=args.include_shared_media,
+        max_cache_bytes=max_cache,
+        timeout_seconds=args.timeout_seconds,
+    )
+
+    if acq_res["status"] not in ("success", "partial"):
+        errs = ", ".join(acq_res.get("errors", ["Acquisition failed"]))
+        print(f"\n[ERROR] Unified WhatsApp Root Acquisition Failed: {errs}\n")
+        sys.exit(1)
+
+    print("\n[*] Acquisition completed successfully. Initiating Chat Parsing...\n")
+
+    # 2. Run parser
+    try:
+        parse_res = parse_decrypted_whatsapp(
+            case_id=args.case,
+            exhibit_id=args.exhibit,
+            output_root=output_root,
+            source="rooted",
+            package=args.package
+        )
+
+        if parse_res["status"] == "success":
+            print("\n" + "=" * 50)
+            print("  Unified WhatsApp Root Pipeline Successful")
+            print("=" * 50)
+            print(f"  Plaintext msgstore.db used  : {parse_res['msgstore_db']}")
+            print(f"  Contact wa.db database used : {parse_res['wa_db'] or 'None'}")
+            print(f"  WhatsApp Media folder used  : {parse_res['media_dir'] or 'None'}")
+            print(f"  Output HTML report directory: {parse_res['html_output_dir']}")
+            print(f"  Output JSON results path    : {parse_res['json_output_path']}")
+            print(f"  Total generated files count : {parse_res['generated_file_count']}")
+            print("=" * 50 + "\n")
+            sys.exit(0)
+        else:
+            err = parse_res.get("stderr", "Parsing failed.")
+            print(f"\n[ERROR] Unified WhatsApp Root Chat Export Failed: {err}\n")
+            sys.exit(1)
+    except Exception as e:
+        print(f"\n[ERROR] Unified WhatsApp Root Chat Export Failed: {str(e)}\n")
+        sys.exit(1)
+
+
 def cmd_acquire_whatsapp_root(args: argparse.Namespace) -> None:
     """Acquire WhatsApp data from a rooted Android device over ADB."""
     print_banner()
@@ -1025,6 +1089,28 @@ def build_parser() -> argparse.ArgumentParser:
     sp_wa_import.add_argument("--package", choices=["com.whatsapp", "com.whatsapp.w4b"], default="com.whatsapp", help="WhatsApp package variant (default: com.whatsapp)")
     sp_wa_import.set_defaults(func=cmd_import_whatsapp_root)
 
+    # ── whatsapp-root-unified ─────────────────────────────────────────
+    sp_wa_root_un = subparsers.add_parser("whatsapp-root-unified", help="Unified WhatsApp root pipeline: acquire private data and parse chats")
+    sp_wa_root_un.add_argument("--case", required=True, help="Case identifier")
+    sp_wa_root_un.add_argument("--exhibit", required=True, help="Exhibit identifier")
+    sp_wa_root_un.add_argument("--serial", default="auto", help="ADB device serial or 'auto'")
+    sp_wa_root_un.add_argument("--output", default="cases", help="Output root directory")
+    sp_wa_root_un.add_argument("--package", choices=["com.whatsapp", "com.whatsapp.w4b"], default="com.whatsapp", help="WhatsApp package variant (default: com.whatsapp)")
+    
+    # Boolean flags
+    sp_wa_root_un.add_argument("--include-cache", action="store_true", dest="include_cache", default=True, help="Include cache folder (default: true)")
+    sp_wa_root_un.add_argument("--no-include-cache", action="store_false", dest="include_cache", help="Exclude cache folder")
+    
+    sp_wa_root_un.add_argument("--include-files", action="store_true", dest="include_files", default=True, help="Include files folder (default: true)")
+    sp_wa_root_un.add_argument("--no-include-files", action="store_false", dest="include_files", help="Exclude files folder")
+    
+    sp_wa_root_un.add_argument("--include-shared-media", action="store_true", dest="include_shared_media", default=True, help="Include shared media folder (default: true)")
+    sp_wa_root_un.add_argument("--no-include-shared-media", action="store_false", dest="include_shared_media", help="Exclude shared media folder")
+    
+    sp_wa_root_un.add_argument("--max-cache-bytes", type=int, default=None, help="Maximum cache bytes allowed")
+    sp_wa_root_un.add_argument("--timeout-seconds", type=int, default=600, help="Command timeout in seconds (default: 600)")
+    sp_wa_root_un.add_argument("--adb-path", default="adb", help="Path to ADB binary (default: adb)")
+    sp_wa_root_un.set_defaults(func=cmd_whatsapp_root_unified)
 
     return parser
 

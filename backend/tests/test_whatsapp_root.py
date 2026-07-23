@@ -678,3 +678,55 @@ def test_parse_whatsapp_decrypted_backup_works(mock_find: MagicMock, mock_run: M
     )
     assert res["status"] == "success"
     assert Path(res["msgstore_db"]) == msgstore_db
+
+
+@patch("erakshak.part_b.whatsapp_root_pipeline.run_whatsapp_root_adb_pipeline")
+@patch("erakshak.part_b.whatsapp_parse_pipeline.parse_decrypted_whatsapp")
+def test_whatsapp_root_unified_pipeline_success(
+    mock_parse: MagicMock, mock_run_acq: MagicMock, tmp_path: Path
+) -> None:
+    """Test unified whatsapp root pipeline: acquire + parse."""
+    mock_run_acq.return_value = {
+        "status": "success",
+        "errors": [],
+        "warnings": [],
+        "summary": {}
+    }
+    mock_parse.return_value = {
+        "status": "success",
+        "msgstore_db": "msgstore.db",
+        "wa_db": "wa.db",
+        "media_dir": "media",
+        "html_output_dir": "html",
+        "json_output_path": "result.json",
+        "generated_file_count": 5
+    }
+
+    # Simulate command execution
+    from erakshak.cli import cmd_whatsapp_root_unified
+    args = MagicMock()
+    args.case = "CASE001"
+    args.exhibit = "EX001"
+    args.serial = "mock_serial"
+    args.output = str(tmp_path)
+    args.package = "com.whatsapp"
+    args.include_cache = True
+    args.include_files = True
+    args.include_shared_media = True
+    args.max_cache_bytes = None
+    args.timeout_seconds = 600
+    args.adb_path = "adb"
+
+    # Use patch to prevent sys.exit(0) from stopping the test
+    with patch("sys.exit") as mock_exit:
+        cmd_whatsapp_root_unified(args)
+        mock_exit.assert_called_once_with(0)
+
+    mock_run_acq.assert_called_once()
+    mock_parse.assert_called_once_with(
+        case_id="CASE001",
+        exhibit_id="EX001",
+        output_root=Path(tmp_path).resolve(),
+        source="rooted",
+        package="com.whatsapp"
+    )
