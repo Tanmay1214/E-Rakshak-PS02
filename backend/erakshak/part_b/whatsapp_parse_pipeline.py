@@ -19,6 +19,86 @@ from erakshak.part_b.whatsapp_pipeline import (
 )
 
 
+def inject_carved_deleted_messages(msgstore_db: Path) -> int:
+    """Scrapes deleted messages from FTS index and injects them back into the active message table."""
+    if not msgstore_db.is_file():
+        return 0
+        
+    import sqlite3
+    
+    # 1. Fetch active messages from all columns of all tables dynamically
+    active_messages = set()
+    conn = None
+    try:
+        conn = sqlite3.connect(str(msgstore_db))
+        tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+        for table_name in tables:
+            if "fts" in table_name.lower() or "sqlite_" in table_name.lower():
+                continue
+            try:
+                cols_info = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+                for col in cols_info:
+                    col_name = col[1]
+                    col_type = col[2].upper()
+                    if col_type in ("TEXT", "VARCHAR", "CHAR", ""):
+                        rows = conn.execute(f"SELECT {col_name} FROM {table_name} WHERE {col_name} IS NOT NULL").fetchall()
+                        for r in rows:
+                            if r[0] and isinstance(r[0], str):
+                                val = r[0].strip()
+                                if val:
+                                    active_messages.add(val)
+            except Exception:
+                continue
+    except Exception:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        return 0
+
+    # 2. Scrape FTS residues
+    fts_messages = {}
+    try:
+        rows = conn.execute("SELECT docid, c0content FROM message_ftsv2_content").fetchall()
+        for docid, content in rows:
+            if content and isinstance(content, str):
+                text = content.strip()
+                if text and text not in active_messages:
+                    fts_messages[abs(docid)] = text
+    except Exception:
+        pass
+        
+    if not fts_messages:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return 0
+        
+    # 3. Update message_type = 7 (deleted placeholder) with carved text and change type to 1 (text)
+    updated_count = 0
+    try:
+        for msg_id, carved_text in fts_messages.items():
+            row = conn.execute("SELECT _id, text_data, message_type FROM message WHERE _id = ?", (msg_id,)).fetchone()
+            if row:
+                _id, cur_text, cur_type = row
+                if cur_type == 7 or not cur_text:
+                    injected_text = f"🔴 [DELETED MESSAGE RECOVERED]: {carved_text}"
+                    conn.execute("UPDATE message SET text_data = ?, message_type = 1 WHERE _id = ?", (injected_text, msg_id))
+                    updated_count += 1
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+            
+    return updated_count
+
+
 def parse_decrypted_whatsapp(
     case_id: str,
     exhibit_id: str,
@@ -209,6 +289,30 @@ def parse_decrypted_whatsapp(
                     vcard_path = generated_vcard_path
             except Exception:
                 pass
+
+    # 1.8 Inject carved deleted messages into database before exporting
+    db_to_inject = None
+    if source == "rooted":
+        if input_dir:
+            db_to_inject = Path(input_dir) / "msgstore.db"
+    else:
+        db_to_inject = Path(output_root) / case_id / exhibit_id / "processed" / "apps" / "whatsapp" / "decrypted" / "msgstore.db"
+        
+    if db_to_inject and db_to_inject.is_file():
+        try:
+            injected_count = inject_carved_deleted_messages(db_to_inject)
+            if injected_count > 0:
+                print(f"\n[*] Successfully recovered and injected {injected_count} deleted messages back into database timeline.\n")
+                append_audit_event(
+                    audit_path=audit_path,
+                    case_id=case_id,
+                    exhibit_id=exhibit_id,
+                    action="whatsapp_deleted_messages_injected",
+                    result="success",
+                    details={"injected_count": injected_count, "database": str(db_to_inject)}
+                )
+        except Exception as e:
+            print(f"\n[WARNING] Failed to inject carved deleted messages: {e}\n")
 
     # 2. Run Exporter
     res = run_whatsapp_chat_exporter(

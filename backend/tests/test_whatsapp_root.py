@@ -790,3 +790,33 @@ def test_whatsapp_carver_pipeline_success(
     manifest_lines = [json.loads(l) for l in manifest_file.read_text(encoding="utf-8").splitlines()]
     classes = [r["artifact_class"] for r in manifest_lines]
     assert "whatsapp_carved_output" in classes
+
+
+def test_inject_carved_deleted_messages(tmp_path: Path) -> None:
+    """Test inject_carved_deleted_messages successfully updates message table type 7 rows."""
+    msgstore_db = tmp_path / "msgstore.db"
+    
+    # Setup test sqlite DB
+    conn = sqlite3.connect(str(msgstore_db))
+    conn.execute("CREATE TABLE message (_id INTEGER, text_data TEXT, message_type INTEGER)")
+    # Row 1: active message
+    conn.execute("INSERT INTO message VALUES (1, 'active message', 1)")
+    # Row 2: deleted placeholder
+    conn.execute("INSERT INTO message VALUES (2, NULL, 7)")
+    conn.execute("CREATE TABLE message_ftsv2_content (docid INTEGER, c0content TEXT, c1fts_jid TEXT, c2fts_namespace TEXT)")
+    conn.execute("INSERT INTO message_ftsv2_content VALUES (1, 'active message', '123', '')")
+    conn.execute("INSERT INTO message_ftsv2_content VALUES (2, 'my deleted message content', '123', '')")
+    conn.commit()
+    conn.close()
+    
+    from erakshak.part_b.whatsapp_parse_pipeline import inject_carved_deleted_messages
+    injected_count = inject_carved_deleted_messages(msgstore_db)
+    
+    assert injected_count == 1
+    
+    # Reopen to check table content
+    conn = sqlite3.connect(str(msgstore_db))
+    row = conn.execute("SELECT text_data, message_type FROM message WHERE _id = 2").fetchone()
+    assert row[0] == "🔴 [DELETED MESSAGE RECOVERED]: my deleted message content"
+    assert row[1] == 1
+    conn.close()
