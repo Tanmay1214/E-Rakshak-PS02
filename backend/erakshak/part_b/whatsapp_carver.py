@@ -48,11 +48,11 @@ def run_online_backup_on_device(
     backup_cmd = f"sqlite3 {remote_db} '.backup {remote_temp_backup}'"
     
     if root_method == "su":
-        shell_args = ["su", "-c", backup_cmd]
+        shell_args = [f"su -c {backup_cmd}"]
     elif root_method == "su_0":
-        shell_args = ["su", "0", backup_cmd]
+        shell_args = [f"su 0 {backup_cmd}"]
     else:
-        shell_args = ["sqlite3", remote_db, f".backup {remote_temp_backup}"]
+        shell_args = [backup_cmd]
         
     res = adb_client.shell(shell_args, timeout=60)
     if not res.ok:
@@ -66,11 +66,13 @@ def run_online_backup_on_device(
     pull_res = adb_client.pull(remote_temp_backup, str(local_backup_path), timeout=120)
     
     # 3. Clean up temporary file on device
-    cleanup_args = ["rm", "-f", remote_temp_backup]
+    cleanup_cmd = f"rm -f {remote_temp_backup}"
     if root_method == "su":
-        cleanup_args = ["su", "-c", f"rm -f {remote_temp_backup}"]
+        cleanup_args = [f"su -c {cleanup_cmd}"]
     elif root_method == "su_0":
-        cleanup_args = ["su", "0", f"rm -f {remote_temp_backup}"]
+        cleanup_args = [f"su 0 {cleanup_cmd}"]
+    else:
+        cleanup_args = [cleanup_cmd]
     adb_client.shell(cleanup_args, timeout=10)
     
     if pull_res.ok and local_backup_path.is_file():
