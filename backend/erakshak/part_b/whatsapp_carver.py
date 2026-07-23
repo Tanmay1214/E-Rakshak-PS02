@@ -144,24 +144,29 @@ def run_whatsapp_carver(
     active_messages = set()
     fts_messages = []
     
-    # 2. Extract Active Messages Safely
+    # 2. Extract Active Messages Safely from ALL columns of ALL tables dynamically
     conn = None
     try:
         conn = sqlite3.connect(str(clean_db_path))
-        cols = [r[1] for r in conn.execute("PRAGMA table_info(message)").fetchall()]
-        text_col = None
-        for cand in ["text_data", "text", "data"]:
-            if cand in cols:
-                text_col = cand
-                break
-                
-        if text_col:
-            rows = conn.execute(f"SELECT {text_col} FROM message").fetchall()
-            for r in rows:
-                if r[0] and isinstance(r[0], str):
-                    active_messages.add(r[0].strip())
+        tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+        for table_name in tables:
+            if "fts" in table_name.lower() or "sqlite_" in table_name.lower():
+                continue
+            try:
+                cols_info = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+                for col in cols_info:
+                    col_name = col[1]
+                    col_type = col[2].upper()
+                    if col_type in ("TEXT", "VARCHAR", "CHAR", ""):
+                        rows = conn.execute(f"SELECT {col_name} FROM {table_name} WHERE {col_name} IS NOT NULL").fetchall()
+                        for r in rows:
+                            if r[0] and isinstance(r[0], str):
+                                val = r[0].strip()
+                                if val:
+                                    active_messages.add(val)
+            except Exception:
+                continue
     except Exception:
-        # Ignore errors if DB is malformed, we will rely on raw binary carving
         pass
         
     # 3. Extract FTS Residual Entries Safely
