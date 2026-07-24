@@ -200,3 +200,49 @@ Row: 2 name=Special, Value, with comma, key=something
 
     assert results[2]["name"] == "Special, Value, with comma"
     assert results[2]["key"] == "something"
+
+
+def test_parse_location_dumpsys() -> None:
+    from erakshak.adb.parsers import parse_location_dumpsys
+
+    sample = """
+Last Known Locations:
+  fused: Location[fused 37.421998,-122.084000 hAcc=20.0 et=+1d2h3m4s5ms time=1700000000000]
+  gps: Location[gps 37.422111 -122.083111 acc=5.0 et=+1d2h3m4s5ms time=1700000000500]
+  network: Location[network 37.422500,-122.083500 hAcc=50.0 time=1700000001000]
+"""
+    results = parse_location_dumpsys(sample)
+    assert len(results) == 3
+    
+    assert results[0]["provider"] == "fused"
+    assert results[0]["latitude"] == 37.421998
+    assert results[0]["longitude"] == -122.084000
+    assert results[0]["accuracy"] == 20.0
+    assert results[0]["timestamp_ms"] == 1700000000000
+    
+    assert results[1]["provider"] == "gps"
+    assert results[1]["latitude"] == 37.422111
+    assert results[1]["longitude"] == -122.083111
+    assert results[1]["accuracy"] == 5.0
+    assert results[1]["timestamp_ms"] == 1700000000500
+    
+    assert results[2]["provider"] == "network"
+    assert results[2]["latitude"] == 37.422500
+    assert results[2]["longitude"] == -122.083500
+    assert results[2]["accuracy"] == 50.0
+    assert results[2]["timestamp_ms"] == 1700000001000
+
+
+def test_extract_gps_from_exif_invalid(tmp_path) -> None:
+    from erakshak.acquisition.media import extract_gps_from_exif
+    from pathlib import Path
+    
+    # 1. Test empty file
+    f = tmp_path / "empty.jpg"
+    f.write_bytes(b"")
+    assert extract_gps_from_exif(f) is None
+    
+    # 2. Test text file
+    f2 = tmp_path / "text.jpg"
+    f2.write_text("not a jpeg file", encoding="utf-8")
+    assert extract_gps_from_exif(f2) is None

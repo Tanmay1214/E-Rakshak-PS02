@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from erakshak.adb.client import ADBClient, ADBResult
-from erakshak.adb.parsers import parse_getprop
+from erakshak.adb.parsers import parse_getprop, parse_location_dumpsys
 from erakshak.case.case_folder import CaseFolder
 from erakshak.case.manifest import ManifestWriter
 from erakshak.case.audit import AuditLogger
@@ -158,6 +158,50 @@ def acquire_device_info(
     )
     selinux: str = (
         se_result.stdout.strip() if se_result.return_code == 0 else "unknown"
+    )
+
+    # ── dumpsys location ──────────────────────────────────────────────
+    location_result: ADBResult = adb.shell(
+        ["dumpsys", "location"], timeout=DEFAULT_ADB_TIMEOUT, audit_action="dumpsys_location"
+    )
+    raw_location_path: Path = case_folder.raw_system_dir / "dumpsys_location.txt"
+    location_list = []
+    
+    if location_result.return_code == 0:
+        raw_location_path.write_text(location_result.stdout, encoding="utf-8")
+        manifest.add_file(
+            artifact_class="dumpsys_location",
+            source_type="adb_command",
+            source_command_or_path="adb shell dumpsys location",
+            destination_path=raw_location_path,
+            status=STATUS_ACQUIRED,
+            reason_code=None,
+            started_at=started_at,
+            completed_at=datetime.now(timezone.utc).isoformat(),
+        )
+        location_list = parse_location_dumpsys(location_result.stdout)
+    else:
+        results["warnings"].append("dumpsys location failed")
+        results["status"] = "partial"
+        manifest.add_status_record(
+            artifact_class="dumpsys_location",
+            source_type="adb_command",
+            source_command_or_path="adb shell dumpsys location",
+            status=STATUS_FAILED,
+            reason_code=str(location_result.stderr),
+        )
+
+    # Save derived/device_location.json
+    location_path: Path = case_folder.derived_dir / "device_location.json"
+    with open(location_path, "w", encoding="utf-8") as f:
+        json.dump({"last_known_locations": location_list}, f, indent=2, ensure_ascii=False)
+    manifest.add_file(
+        artifact_class="device_location",
+        source_type="parsed",
+        source_command_or_path="dumpsys location",
+        destination_path=location_path,
+        status=STATUS_ACQUIRED if location_list else STATUS_NOT_EXPOSED,
+        reason_code=None if location_list else "No active locations cached",
     )
 
     # ── Helper: safe property lookup ─────────────────────────────────

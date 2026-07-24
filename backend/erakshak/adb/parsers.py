@@ -944,3 +944,54 @@ def parse_content_query(text: str) -> list[dict[str, str]]:
         rows.append(row_dict)
 
     return rows
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Location Service parsing
+# ═══════════════════════════════════════════════════════════════════════════
+
+def parse_location_dumpsys(text: str) -> list[dict[str, Any]]:
+    """Parse latitude and longitude from dumpsys location output.
+
+    Looks for cache definitions like Location[fused 37.421998,-122.084000 ...]
+    and returns unique locations with provider, latitude, longitude, accuracy,
+    and timestamps if present.
+    """
+    results: list[dict[str, Any]] = []
+    if not text:
+        return results
+
+    # Match patterns like: Location[fused 37.421998,-122.084000 ...
+    # or Location[gps 37.421998 -122.084000 ...
+    pattern = re.compile(r"Location\[(\w+)\s+([-+]?\d+\.\d+)[,\s]+([-+]?\d+\.\d+)")
+    
+    for match in pattern.finditer(text):
+        provider = match.group(1)
+        lat = float(match.group(2))
+        lon = float(match.group(3))
+        
+        # Check if we already have this exact coordinate pair from this provider to avoid duplicates
+        if not any(r["provider"] == provider and r["latitude"] == lat and r["longitude"] == lon for r in results):
+            # Parse additional details if present on the same line
+            line_end = text.find('\n', match.start())
+            line = text[match.start():line_end] if line_end != -1 else text[match.start():]
+            
+            accuracy = None
+            acc_match = re.search(r"\b(?:hAcc|acc)=(\d+\.\d+|\d+)", line)
+            if acc_match:
+                accuracy = float(acc_match.group(1))
+                
+            time_val = None
+            time_match = re.search(r"\btime=(\d+)", line)
+            if time_match:
+                time_val = int(time_match.group(1))
+                
+            results.append({
+                "provider": provider,
+                "latitude": lat,
+                "longitude": lon,
+                "accuracy": accuracy,
+                "timestamp_ms": time_val
+            })
+            
+    return results
