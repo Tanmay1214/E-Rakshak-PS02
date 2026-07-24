@@ -554,8 +554,8 @@ cases/
         │       ├── contacts.vcf              ← Dynamically generated vCard file
         │       ├── result.json               ← Pretty-printed JSON dump of all chats
         │       └── html/
-        │           ├── Darsh-Sharda-LNMIIT.html <-- Clean named HTML chat files
-        │           └── 918799909000.html
+        │           ├── contact-name-saved-in-phone.html <-- Clean named HTML chat files
+        │           └── phone-number.html
         │
         └── hashes/
             └── sha256sums.txt                ← SHA-256 checksums (coreutils-compatible)
