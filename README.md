@@ -825,6 +825,56 @@ This parses the staged database (`processed/apps/whatsapp/rooted/com.whatsapp/ms
 
 ---
 
+### WhatsApp Root Unified Command (`whatsapp-root-unified`)
+
+For rapid triage of rooted devices or root emulators, E-RAKSHAK provides a unified command that runs both data acquisition and chat exporting sequentially in a single step:
+
+```bash
+python -m erakshak.cli whatsapp-root-unified --case CASE001 --exhibit EX001 --serial DEVICE_SERIAL --package com.whatsapp
+```
+
+**What it does sequentially:**
+1. Performs a live root detection check.
+2. Runs native SQLite `.backup` command on the device to flush active transactions and creates a clean snapshot.
+3. Pulls the database (`msgstore_clean.db`), media, and configurations.
+4. Performs deleted messages recovery mapping and database injection.
+5. Invokes `wtsexporter` to generate fully enriched, named HTML/JSON preview reports immediately.
+
+---
+
+### WhatsApp Forensic Carving & Deleted Message Restoral (`carve-whatsapp`)
+
+To recover deleted chat history from a device's plaintext databases, incident responders can run:
+
+```bash
+python -m erakshak.cli carve-whatsapp --case CASE001 --exhibit EX001 --serial DEVICE_SERIAL --output cases
+```
+
+**Forensic Capabilities:**
+- **FTS Residues Recovery**: Scans SQLite Write-Ahead Logs (`msgstore.db-wal`) and FTS virtual content tables (`message_ftsv2_content`) to scrape deleted text residues.
+- **Delete for Everyone & Delete for Me Recovery**: 
+  - For *"Delete for Everyone"* messages (which leaves a placeholder type `7` row in the active database), the tool replaces the blank field with the carved text.
+  - For *"Delete for Me"* messages (where the active database row has been completely deleted), the tool mathematically decodes the JID token (`c1fts_jid`) back to its original `chat_row_id` and reconstructs an approximate message timestamp by checking consecutive message IDs. It then inserts the recovered row back into the database.
+- **Auto-Injection & Date Filtering**: Integrates recovered messages with a custom marker (`🔴 [DELETED MESSAGE RECOVERED]`) directly into the HTML timeline. Uses the specified date filter (default 7 days) to limit updates to the targeted time window, bringing execution speeds down to milliseconds.
+
+---
+
+### Telegram Android Chat Extraction (`telegram-acquire`)
+
+Telegram caches contacts, chats, and channels inside private sandboxed database paths. On an authorized rooted device or emulator, E-RAKSHAK can pull and index this data automatically:
+
+```bash
+python -m erakshak.cli telegram-acquire --case CASE001 --exhibit EXHIBIT001 --serial DEVICE_SERIAL --output cases
+```
+
+**What it does sequentially:**
+1. Stages the primary Telegram database `cache4.db` (along with `-wal`, `-shm`, and `-journal` sidecars) into the raw exhibit directory.
+2. Mounts the staging copy using standard SQLite `?mode=ro` URI connections to prevent sidecar pollution and spoliation.
+3. Decodes the Telegram TL-serialized binary byte blocks (`data` and `message` blobs) using a customized regex pattern (`[\x20-\x7e]{3,}`) to extract readable chat text.
+4. Normalizes and writes structured logs: `cache4_users.jsonl`, `cache4_messages.jsonl`, and `cache4_dialogs.jsonl` under `derived/apps/telegram/`.
+
+---
+
 ## Legal & Ethical Notice
 
 > [!IMPORTANT]
