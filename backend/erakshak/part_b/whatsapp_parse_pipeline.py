@@ -19,14 +19,69 @@ from erakshak.part_b.whatsapp_pipeline import (
 )
 
 
-def inject_carved_deleted_messages(msgstore_db: Path) -> int:
-    """Scrapes deleted messages from FTS index and injects them back into the active message table."""
+def inject_carved_deleted_messages(msgstore_db: Path, filter_date: Optional[str] = None) -> int:
+    """Scrapes deleted messages from FTS index and injects them back into the active message table
+
+    filtering by the specified filter_date criteria (defaulting to last 7 days).
+    """
     if not msgstore_db.is_file():
         return 0
         
     import sqlite3
+    from datetime import datetime, timezone, timedelta
     
-    # 1. Fetch active messages from all columns of all tables dynamically
+    # 1. Parse date filter to timestamp limits (in milliseconds since epoch)
+    min_timestamp_ms = None
+    max_timestamp_ms = None
+    
+    if filter_date is None:
+        # Default to last 7 days
+        seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
+        min_timestamp_ms = int(seven_days_ago.timestamp() * 1000)
+    else:
+        try:
+            cleaned = filter_date.strip()
+            op = None
+            date_str = cleaned
+            if cleaned.startswith(">="):
+                op = ">="
+                date_str = cleaned[2:].strip()
+            elif cleaned.startswith("<="):
+                op = "<="
+                date_str = cleaned[2:].strip()
+            elif cleaned.startswith(">"):
+                op = ">"
+                date_str = cleaned[1:].strip()
+            elif cleaned.startswith("<"):
+                op = "<"
+                date_str = cleaned[1:].strip()
+            elif cleaned.startswith("="):
+                op = "="
+                date_str = cleaned[1:].strip()
+                
+            # Parse YYYY-MM-DD
+            dt = datetime.strptime(date_str, "%Y-%m-%d")
+            # Treat date as UTC
+            dt_utc = dt.replace(tzinfo=timezone.utc)
+            ts_ms = int(dt_utc.timestamp() * 1000)
+            
+            if op == ">":
+                min_timestamp_ms = ts_ms + 1
+            elif op == ">=":
+                min_timestamp_ms = ts_ms
+            elif op == "<":
+                max_timestamp_ms = ts_ms - 1
+            elif op == "<=":
+                max_timestamp_ms = ts_ms
+            elif op == "=" or op is None:
+                min_timestamp_ms = ts_ms
+                max_timestamp_ms = ts_ms + 24 * 60 * 60 * 1000 - 1
+        except Exception:
+            # Fallback to last 7 days if parsing fails
+            seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
+            min_timestamp_ms = int(seven_days_ago.timestamp() * 1000)
+            
+    # 2. Fetch active messages from all columns of all tables dynamically
     active_messages = set()
     conn = None
     try:
@@ -57,7 +112,7 @@ def inject_carved_deleted_messages(msgstore_db: Path) -> int:
                 pass
         return 0
 
-    # 2. Scrape FTS residues
+    # 3. Scrape FTS residues
     fts_messages = {}
     try:
         rows = conn.execute("SELECT docid, c0content FROM message_ftsv2_content").fetchall()
@@ -76,13 +131,21 @@ def inject_carved_deleted_messages(msgstore_db: Path) -> int:
             pass
         return 0
         
-    # 3. Update message_type = 7 (deleted placeholder) with carved text and change type to 1 (text)
+    # 4. Update message_type = 7 (deleted placeholder) with carved text and change type to 1 (text)
     updated_count = 0
     try:
         for msg_id, carved_text in fts_messages.items():
-            row = conn.execute("SELECT _id, text_data, message_type FROM message WHERE _id = ?", (msg_id,)).fetchone()
+            row = conn.execute("SELECT _id, text_data, message_type, timestamp FROM message WHERE _id = ?", (msg_id,)).fetchone()
             if row:
-                _id, cur_text, cur_type = row
+                _id, cur_text, cur_type, ts = row
+                
+                # Apply timestamp filter
+                if ts:
+                    if min_timestamp_ms is not None and ts < min_timestamp_ms:
+                        continue
+                    if max_timestamp_ms is not None and ts > max_timestamp_ms:
+                        continue
+                        
                 if cur_type == 7 or not cur_text:
                     injected_text = f"🔴 [DELETED MESSAGE RECOVERED]: {carved_text}"
                     conn.execute("UPDATE message SET text_data = ?, message_type = 1 WHERE _id = ?", (injected_text, msg_id))
@@ -300,7 +363,7 @@ def parse_decrypted_whatsapp(
         
     if db_to_inject and db_to_inject.is_file():
         try:
-            injected_count = inject_carved_deleted_messages(db_to_inject)
+            injected_count = inject_carved_deleted_messages(db_to_inject, filter_date=filter_date)
             if injected_count > 0:
                 print(f"\n[*] Successfully recovered and injected {injected_count} deleted messages back into database timeline.\n")
                 append_audit_event(

@@ -793,16 +793,16 @@ def test_whatsapp_carver_pipeline_success(
 
 
 def test_inject_carved_deleted_messages(tmp_path: Path) -> None:
-    """Test inject_carved_deleted_messages successfully updates message table type 7 rows."""
+    """Test inject_carved_deleted_messages successfully updates message table type 7 rows with date filter support."""
     msgstore_db = tmp_path / "msgstore.db"
     
     # Setup test sqlite DB
     conn = sqlite3.connect(str(msgstore_db))
-    conn.execute("CREATE TABLE message (_id INTEGER, text_data TEXT, message_type INTEGER)")
-    # Row 1: active message
-    conn.execute("INSERT INTO message VALUES (1, 'active message', 1)")
-    # Row 2: deleted placeholder
-    conn.execute("INSERT INTO message VALUES (2, NULL, 7)")
+    conn.execute("CREATE TABLE message (_id INTEGER, text_data TEXT, message_type INTEGER, timestamp INTEGER)")
+    # Row 1: active message (timestamp in July 2026, approx 1782816000000 ms)
+    conn.execute("INSERT INTO message VALUES (1, 'active message', 1, 1782816000000)")
+    # Row 2: deleted placeholder (timestamp in May 2026, approx 1777564800000 ms)
+    conn.execute("INSERT INTO message VALUES (2, NULL, 7, 1777564800000)")
     conn.execute("CREATE TABLE message_ftsv2_content (docid INTEGER, c0content TEXT, c1fts_jid TEXT, c2fts_namespace TEXT)")
     conn.execute("INSERT INTO message_ftsv2_content VALUES (1, 'active message', '123', '')")
     conn.execute("INSERT INTO message_ftsv2_content VALUES (2, 'my deleted message content', '123', '')")
@@ -810,9 +810,21 @@ def test_inject_carved_deleted_messages(tmp_path: Path) -> None:
     conn.close()
     
     from erakshak.part_b.whatsapp_parse_pipeline import inject_carved_deleted_messages
-    injected_count = inject_carved_deleted_messages(msgstore_db)
     
-    assert injected_count == 1
+    # Test 1: Date filter excludes Row 2 (looks for messages >= July 2026)
+    injected_count = inject_carved_deleted_messages(msgstore_db, filter_date="> 2026-07-01")
+    assert injected_count == 0
+    
+    # Verify it remained type 7
+    conn = sqlite3.connect(str(msgstore_db))
+    row = conn.execute("SELECT text_data, message_type FROM message WHERE _id = 2").fetchone()
+    assert row[0] is None
+    assert row[1] == 7
+    conn.close()
+
+    # Test 2: Date filter includes Row 2 (looks for messages >= April 2026)
+    injected_count_2 = inject_carved_deleted_messages(msgstore_db, filter_date="> 2026-04-01")
+    assert injected_count_2 == 1
     
     # Reopen to check table content
     conn = sqlite3.connect(str(msgstore_db))
