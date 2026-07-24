@@ -793,42 +793,64 @@ def test_whatsapp_carver_pipeline_success(
 
 
 def test_inject_carved_deleted_messages(tmp_path: Path) -> None:
-    """Test inject_carved_deleted_messages successfully updates message table type 7 rows with date filter support."""
+    """Test inject_carved_deleted_messages successfully updates type 7 placeholder rows and inserts completely deleted rows."""
     msgstore_db = tmp_path / "msgstore.db"
     
     # Setup test sqlite DB
     conn = sqlite3.connect(str(msgstore_db))
-    conn.execute("CREATE TABLE message (_id INTEGER, text_data TEXT, message_type INTEGER, timestamp INTEGER)")
+    conn.execute("CREATE TABLE message (_id INTEGER PRIMARY KEY, chat_row_id INTEGER, from_me INTEGER, key_id TEXT, timestamp INTEGER, message_type INTEGER, text_data TEXT)")
+    conn.execute("CREATE TABLE chat (_id INTEGER PRIMARY KEY, jid_row_id INTEGER)")
+    conn.execute("CREATE TABLE jid (_id INTEGER PRIMARY KEY, raw_string TEXT)")
+    
+    # Insert chat and JID (jid_row_id = 205 -> chat_id = 45)
+    # Target value = 205 + 2 + 7 = 214 -> base36 is '5y'
+    conn.execute("INSERT INTO jid VALUES (205, '919251005161@s.whatsapp.net')")
+    conn.execute("INSERT INTO chat VALUES (45, 205)")
+    
     # Row 1: active message (timestamp in July 2026, approx 1782816000000 ms)
-    conn.execute("INSERT INTO message VALUES (1, 'active message', 1, 1782816000000)")
+    conn.execute("INSERT INTO message VALUES (1, 45, 0, 'key1', 1782816000000, 1, 'active message')")
     # Row 2: deleted placeholder (timestamp in May 2026, approx 1777564800000 ms)
-    conn.execute("INSERT INTO message VALUES (2, NULL, 7, 1777564800000)")
+    conn.execute("INSERT INTO message VALUES (2, 45, 0, 'key2', 1777564800000, 7, NULL)")
+    # Row 3: completely deleted "Delete for Me" message (not in message table!)
+    
     conn.execute("CREATE TABLE message_ftsv2_content (docid INTEGER, c0content TEXT, c1fts_jid TEXT, c2fts_namespace TEXT)")
-    conn.execute("INSERT INTO message_ftsv2_content VALUES (1, 'active message', '123', '')")
-    conn.execute("INSERT INTO message_ftsv2_content VALUES (2, 'my deleted message content', '123', '')")
+    conn.execute("INSERT INTO message_ftsv2_content VALUES (1, 'active message', '1 5y', '')")
+    conn.execute("INSERT INTO message_ftsv2_content VALUES (2, 'my deleted for everyone content', '1 5y', '')")
+    conn.execute("INSERT INTO message_ftsv2_content VALUES (3, 'my deleted for me content', '1 5y', '')")
     conn.commit()
     conn.close()
     
     from erakshak.part_b.whatsapp_parse_pipeline import inject_carved_deleted_messages
     
-    # Test 1: Date filter excludes Row 2 (looks for messages >= July 2026)
+    # Test 1: Date filter excludes Row 2 and Row 3 (looks for messages >= July 2026)
     injected_count = inject_carved_deleted_messages(msgstore_db, filter_date="> 2026-07-01")
     assert injected_count == 0
     
-    # Verify it remained type 7
+    # Verify both remained deleted/missing
     conn = sqlite3.connect(str(msgstore_db))
-    row = conn.execute("SELECT text_data, message_type FROM message WHERE _id = 2").fetchone()
-    assert row[0] is None
-    assert row[1] == 7
+    row2 = conn.execute("SELECT text_data, message_type FROM message WHERE _id = 2").fetchone()
+    assert row2[0] is None
+    assert row2[1] == 7
+    row3 = conn.execute("SELECT _id FROM message WHERE _id = 3").fetchone()
+    assert row3 is None
     conn.close()
 
-    # Test 2: Date filter includes Row 2 (looks for messages >= April 2026)
+    # Test 2: Date filter includes everything (looks for messages >= April 2026)
     injected_count_2 = inject_carved_deleted_messages(msgstore_db, filter_date="> 2026-04-01")
-    assert injected_count_2 == 1
+    assert injected_count_2 == 2
     
     # Reopen to check table content
     conn = sqlite3.connect(str(msgstore_db))
-    row = conn.execute("SELECT text_data, message_type FROM message WHERE _id = 2").fetchone()
-    assert row[0] == "🔴 [DELETED MESSAGE RECOVERED]: my deleted message content"
-    assert row[1] == 1
+    # Row 2 (updated)
+    row2 = conn.execute("SELECT text_data, message_type FROM message WHERE _id = 2").fetchone()
+    assert row2[0] == "🔴 [DELETED MESSAGE RECOVERED]: my deleted for everyone content"
+    assert row2[1] == 1
+    
+    # Row 3 (inserted!)
+    row3 = conn.execute("SELECT text_data, message_type, chat_row_id, timestamp, key_id FROM message WHERE _id = 3").fetchone()
+    assert row3[0] == "🔴 [DELETED MESSAGE RECOVERED]: my deleted for me content"
+    assert row3[1] == 1
+    assert row3[2] == 45
+    assert row3[3] == 1777564800000 # Reconstructed from Row 2 timestamp!
+    assert row3[4] == "carved_3"
     conn.close()

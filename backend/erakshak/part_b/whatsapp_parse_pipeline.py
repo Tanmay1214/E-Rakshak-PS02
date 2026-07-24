@@ -115,12 +115,12 @@ def inject_carved_deleted_messages(msgstore_db: Path, filter_date: Optional[str]
     # 3. Scrape FTS residues
     fts_messages = {}
     try:
-        rows = conn.execute("SELECT docid, c0content FROM message_ftsv2_content").fetchall()
-        for docid, content in rows:
+        rows = conn.execute("SELECT docid, c0content, c1fts_jid FROM message_ftsv2_content").fetchall()
+        for docid, content, fts_jid in rows:
             if content and isinstance(content, str):
                 text = content.strip()
                 if text and text not in active_messages:
-                    fts_messages[abs(docid)] = text
+                    fts_messages[abs(docid)] = (text, fts_jid)
     except Exception:
         pass
         
@@ -131,10 +131,35 @@ def inject_carved_deleted_messages(msgstore_db: Path, filter_date: Optional[str]
             pass
         return 0
         
-    # 4. Update message_type = 7 (deleted placeholder) with carved text and change type to 1 (text)
-    updated_count = 0
+    # 4. Build JID FTS token to chat_row_id map
+    token_to_chat_id = {}
     try:
-        for msg_id, carved_text in fts_messages.items():
+        def encode_base36(val):
+            if val == 0:
+                return "0"
+            chars = "0123456789abcdefghijklmnopqrstuvwxyz"
+            res = ""
+            while val > 0:
+                res = chars[val % 36] + res
+                val //= 36
+            return res
+
+        chat_rows = conn.execute("SELECT _id, jid_row_id FROM chat").fetchall()
+        for chat_id, jrid in chat_rows:
+            for L in (1, 2, 3, 4):
+                val = jrid + L + 7
+                token = encode_base36(val)
+                if len(token) == L:
+                    token_to_chat_id[token] = chat_id
+                    break
+    except Exception:
+        pass
+
+    # 5. Update or insert carved messages based on active row presence
+    updated_count = 0
+    inserted_count = 0
+    try:
+        for msg_id, (carved_text, fts_jid) in fts_messages.items():
             row = conn.execute("SELECT _id, text_data, message_type, timestamp FROM message WHERE _id = ?", (msg_id,)).fetchone()
             if row:
                 _id, cur_text, cur_type, ts = row
@@ -150,6 +175,44 @@ def inject_carved_deleted_messages(msgstore_db: Path, filter_date: Optional[str]
                     injected_text = f"🔴 [DELETED MESSAGE RECOVERED]: {carved_text}"
                     conn.execute("UPDATE message SET text_data = ?, message_type = 1 WHERE _id = ?", (injected_text, msg_id))
                     updated_count += 1
+            else:
+                # Row is completely deleted from active message table (Delete for Me)
+                # 1. Resolve chat_id from fts_jid
+                chat_id = None
+                if fts_jid:
+                    tokens = fts_jid.split()
+                    if tokens:
+                        last_token = tokens[-1]
+                        chat_id = token_to_chat_id.get(last_token)
+                        
+                if not chat_id:
+                    continue
+                    
+                # 2. Reconstruct timestamp from nearby rows
+                ts = None
+                for offset in (1, -1, 2, -2, 3, -3, 4, -4, 5, -5):
+                    near_row = conn.execute("SELECT timestamp FROM message WHERE _id = ?", (msg_id + offset,)).fetchone()
+                    if near_row and near_row[0]:
+                        ts = near_row[0]
+                        break
+                if not ts:
+                    continue
+                    
+                # Apply timestamp filter
+                if min_timestamp_ms is not None and ts < min_timestamp_ms:
+                    continue
+                if max_timestamp_ms is not None and ts > max_timestamp_ms:
+                    continue
+                    
+                # 3. Insert new recovered row
+                injected_text = f"🔴 [DELETED MESSAGE RECOVERED]: {carved_text}"
+                key_id = f"carved_{msg_id}"
+                conn.execute("""
+                    INSERT INTO message (_id, chat_row_id, from_me, key_id, timestamp, message_type, text_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (msg_id, chat_id, 0, key_id, ts, 1, injected_text))
+                inserted_count += 1
+                
         conn.commit()
     except Exception:
         pass
@@ -159,7 +222,7 @@ def inject_carved_deleted_messages(msgstore_db: Path, filter_date: Optional[str]
         except Exception:
             pass
             
-    return updated_count
+    return updated_count + inserted_count
 
 
 def parse_decrypted_whatsapp(
