@@ -981,6 +981,118 @@ def cmd_import_whatsapp_root(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_collect_browser_evidence(args: argparse.Namespace) -> None:
+    """Acquire and parse browser history/downloads/searches."""
+    print_banner()
+    print(f"[*] Collect Browser Evidence - Case: {args.case}  Exhibit: {args.exhibit}  Mode: {args.mode}")
+
+    output_root = Path(args.output).resolve()
+    case_folder = CaseFolder(output_root, args.case, args.exhibit)
+    case_path = case_folder.exhibit_path
+
+    audit_path = case_path / "acquisition" / "audit.jsonl"
+    manifest_path = case_path / "acquisition" / "acquisition_manifest.jsonl"
+    sha256sums_path = case_path / "hashes" / "sha256sums.txt"
+    sha256sums_path.parent.mkdir(parents=True, exist_ok=True)
+
+    audit = AuditLogger(audit_path, args.case, args.exhibit)
+    manifest = ManifestWriter(manifest_path, sha256sums_path, args.case, args.exhibit)
+
+    client = None
+    if args.mode in ("non-root", "rooted"):
+        adb_path = getattr(args, "adb_path", "adb")
+        serial = _resolve_serial(args.serial, adb_path=adb_path)
+        client = ADBClient(serial, audit, adb_path)
+
+    from erakshak.acquisition.browser_evidence import acquire_browser_evidence
+    
+    try:
+        summary = acquire_browser_evidence(
+            adb=client,
+            case_folder=case_folder,
+            manifest=manifest,
+            audit=audit,
+            mode=args.mode,
+            import_root=getattr(args, "import_root", None),
+            case_id=args.case,
+            exhibit_id=args.exhibit,
+        )
+
+        print("\n" + "=" * 60)
+        print("  BROWSER EVIDENCE SUMMARY")
+        print("=" * 60)
+        print(f"  Mode             : {summary.get('mode')}")
+        print(f"  Installed        : {', '.join(summary.get('installed_browsers', [])) or 'None'}")
+        print(f"  Parsed           : {', '.join(summary.get('parsed_browsers', [])) or 'None'}")
+        print(f"  History Records  : {summary.get('history_records')}")
+        print(f"  Search Records   : {summary.get('search_records')}")
+        print(f"  Download Records : {summary.get('download_records')}")
+        if summary.get('not_accessible'):
+            print(f"  Not Accessible   : {', '.join(summary.get('not_accessible', []))}")
+        if summary.get('warnings'):
+            print("  Warnings:")
+            for w in summary['warnings']:
+                print(f"    * {w}")
+        print("=" * 60 + "\n")
+    except Exception as e:
+        print(f"\n[ERROR] Browser Evidence Collection Failed: {str(e)}\n")
+        sys.exit(1)
+
+
+def cmd_collect_location_evidence(args: argparse.Namespace) -> None:
+    """Acquire and parse location evidence from various sources."""
+    print_banner()
+    print(f"[*] Collect Location Evidence - Case: {args.case}  Exhibit: {args.exhibit}")
+
+    output_root = Path(args.output).resolve()
+    case_folder = CaseFolder(output_root, args.case, args.exhibit)
+    case_path = case_folder.exhibit_path
+
+    audit_path = case_path / "acquisition" / "audit.jsonl"
+    manifest_path = case_path / "acquisition" / "acquisition_manifest.jsonl"
+    sha256sums_path = case_path / "hashes" / "sha256sums.txt"
+    sha256sums_path.parent.mkdir(parents=True, exist_ok=True)
+
+    audit = AuditLogger(audit_path, args.case, args.exhibit)
+    manifest = ManifestWriter(manifest_path, sha256sums_path, args.case, args.exhibit)
+
+    adb_path = getattr(args, "adb_path", "adb")
+    serial = _resolve_serial(args.serial, adb_path=adb_path)
+    client = ADBClient(serial, audit, adb_path)
+
+    from erakshak.acquisition.location_evidence import acquire_location_evidence
+    
+    try:
+        summary = acquire_location_evidence(
+            adb=client,
+            case_folder=case_folder,
+            manifest=manifest,
+            audit=audit,
+            include_dumpsys=args.include_dumpsys,
+            include_media_exif=args.include_media_exif,
+            include_cell_observations=args.include_cell_observations,
+            case_id=args.case,
+            exhibit_id=args.exhibit,
+        )
+
+        print("\n" + "=" * 60)
+        print("  LOCATION EVIDENCE SUMMARY")
+        print("=" * 60)
+        print(f"  Location Records : {summary.get('location_records')}")
+        print("  Sources Counts   :")
+        for src, cnt in summary.get('sources', {}).items():
+            print(f"    * {src:<16s}: {cnt}")
+        date_range = summary.get('date_range') or {}
+        print(f"  First Record Date: {date_range.get('first') or 'N/A'}")
+        print(f"  Last Record Date : {date_range.get('last') or 'N/A'}")
+        if summary.get('warnings'):
+            print("  Warnings:")
+            for w in summary['warnings']:
+                print(f"    * {w}")
+        print("=" * 60 + "\n")
+    except Exception as e:
+        print(f"\n[ERROR] Location Evidence Collection Failed: {str(e)}\n")
+        sys.exit(1)
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -1166,6 +1278,37 @@ def build_parser() -> argparse.ArgumentParser:
     sp_wa_carve.add_argument("--package", choices=["com.whatsapp", "com.whatsapp.w4b"], default="com.whatsapp", help="WhatsApp package variant (default: com.whatsapp)")
     sp_wa_carve.add_argument("--adb-path", default="adb", help="Path to ADB binary (default: adb)")
     sp_wa_carve.set_defaults(func=cmd_carve_whatsapp)
+
+    # ── collect-browser-evidence ──────────────────────────────────────
+    sp_browser = subparsers.add_parser("collect-browser-evidence", help="Acquire and parse browser history, searches, and downloads")
+    sp_browser.add_argument("--case", required=True, help="Case identifier")
+    sp_browser.add_argument("--exhibit", required=True, help="Exhibit identifier")
+    sp_browser.add_argument("--output", default="cases", help="Output root directory")
+    sp_browser.add_argument("--serial", default="auto", help="ADB device serial or 'auto'")
+    sp_browser.add_argument("--mode", choices=["non-root", "rooted", "imported"], default="non-root", help="Access mode (default: non-root)")
+    sp_browser.add_argument("--import-root", help="Path to imported filesystem dump root (required if mode is imported)")
+    sp_browser.add_argument("--adb-path", default="adb", help="Path to ADB binary (default: adb)")
+    sp_browser.set_defaults(func=cmd_collect_browser_evidence)
+
+    # ── collect-location-evidence ─────────────────────────────────────
+    sp_location = subparsers.add_parser("collect-location-evidence", help="Acquire and parse location evidence from various sources")
+    sp_location.add_argument("--case", required=True, help="Case identifier")
+    sp_location.add_argument("--exhibit", required=True, help="Exhibit identifier")
+    sp_location.add_argument("--output", default="cases", help="Output root directory")
+    sp_location.add_argument("--serial", default="auto", help="ADB device serial or 'auto'")
+    sp_location.add_argument("--adb-path", default="adb", help="Path to ADB binary (default: adb)")
+    
+    # Location feature flags
+    sp_location.add_argument("--include-dumpsys", action="store_true", dest="include_dumpsys", default=True, help="Include dumpsys snapshots (default: true)")
+    sp_location.add_argument("--no-include-dumpsys", action="store_false", dest="include_dumpsys", help="Exclude dumpsys snapshots")
+    
+    sp_location.add_argument("--include-media-exif", action="store_true", dest="include_media_exif", default=True, help="Include media EXIF data (default: true)")
+    sp_location.add_argument("--no-include-media-exif", action="store_false", dest="include_media_exif", help="Exclude media EXIF data")
+    
+    sp_location.add_argument("--include-cell-observations", action="store_true", dest="include_cell_observations", default=True, help="Include cell observations (default: true)")
+    sp_location.add_argument("--no-include-cell-observations", action="store_false", dest="include_cell_observations", help="Exclude cell observations")
+    
+    sp_location.set_defaults(func=cmd_collect_location_evidence)
 
     return parser
 

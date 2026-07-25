@@ -875,6 +875,50 @@ python -m erakshak.cli telegram-acquire --case CASE001 --exhibit EXHIBIT001 --se
 
 ---
 
+### Browser and Location Evidence
+
+E-RAKSHAK supports acquiring and parsing browser history and location evidence under separate dedicated subcommands.
+
+#### 1. Browser Evidence (`collect-browser-evidence`)
+Browser history, searches, and downloads are acquired based on the access mode:
+* **non-root mode**: Checks for the presence of supported browser packages (Chrome, Brave, Edge, Opera, Firefox). It honestly reports database files as `not_accessible_non_root` due to the Android application sandbox.
+* **rooted mode**: If root is available, pulls the `History` database group (History, WAL, SHM) from Chromium browser sandboxes under `/data/data/<package>/app_chrome/<profile>/` (supporting Default, Profile 1, and Profile 2).
+* **imported mode**: Recursively scans an imported filesystem extraction directory to locate and parse `History` files.
+
+Parsed files are written to:
+* `derived/browser_history.jsonl`
+* `derived/browser_searches.jsonl`
+* `derived/browser_downloads.jsonl`
+* `derived/browser_summary.json`
+
+**Example Commands:**
+```bash
+# Non-root mode detection
+python -m erakshak.cli collect-browser-evidence --case CASE001 --exhibit EXHIBIT001 --output cases --mode non-root
+
+# Imported mode parsing
+python -m erakshak.cli collect-browser-evidence --case CASE001 --exhibit EXHIBIT001 --output cases --mode imported --import-root ./fixtures/rooted_android
+```
+
+#### 2. Location Evidence (`collect-location-evidence`)
+Location evidence collects geographical metadata and snapshot coordinates without modifying any device settings:
+* **Media EXIF GPS**: Recursively scans and parses JPEG images (using a custom pure-Python binary parser) for GPS coordinates.
+* **MediaStore / Collector Imports**: Extracts metadata coordinates from collector logs or media index records.
+* **Dumpsys Location Snapshots**: Pulls `dumpsys location` and `dumpsys location --gnss` to extract the device's last-known cached GPS coordinates, hAcc (accuracy), and provider details.
+* **Cell Tower Observations**: Ingests cell tower LAC/CID signal data.
+* **Surat Locality Enrichment**: Evaluates coordinates against an offline local mapping configuration to identify the nearest Surat locality (e.g. Varachha, Adajan, Vesu) within a 5 km threshold.
+
+Outputs are written to:
+* `derived/location_evidence.jsonl`
+* `derived/location_summary.json`
+
+**Example Command:**
+```bash
+python -m erakshak.cli collect-location-evidence --case CASE001 --exhibit EXHIBIT001 --output cases --include-dumpsys --include-media-exif
+```
+
+---
+
 ## Legal & Ethical Notice
 
 > [!IMPORTANT]
