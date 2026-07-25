@@ -246,3 +246,31 @@ def test_extract_gps_from_exif_invalid(tmp_path) -> None:
     f2 = tmp_path / "text.jpg"
     f2.write_text("not a jpeg file", encoding="utf-8")
     assert extract_gps_from_exif(f2) is None
+
+
+def test_parse_telephony_registry() -> None:
+    from erakshak.adb.parsers import parse_telephony_registry
+
+    sample = """
+  2026-07-24T18:56:28.909006 - notifyServiceStateForSubscriber: subId=2 phoneId=0 state={mVoiceRegState=0(IN_SERVICE), mCellRegistrationInfos=[NetworkRegistrationInfo{ domain=CS cellIdentity=CellIdentityLte:{ mCi=1400280 mPci=356 mTac=4005 mEarfcn=38948 mMcc=405 mMnc=868 } }]}
+  2026-07-24T18:58:35.675536 - notifyServiceStateForSubscriber: subId=2 phoneId=0 state={mVoiceRegState=0(IN_SERVICE), mCellRegistrationInfos=[NetworkRegistrationInfo{ domain=CS cellIdentity=CellIdentityNr:{ mPci=24 mTac=4005 mNrArfcn=634080 mMcc=405 mMnc=868 mNci=310020041 } }]}
+"""
+    results = parse_telephony_registry(sample)
+    assert len(results) == 2
+
+    # LTE Entry
+    assert results[0]["type"] == "LTE"
+    assert results[0]["timestamp"] == "2026-07-24T18:56:28.909006"
+    assert results[0]["mcc"] == "405"
+    assert results[0]["mnc"] == "868"
+    assert results[0]["lac"] == "4005"
+    assert results[0]["cid"] == "1400280"
+
+    # NR Entry
+    assert results[1]["type"] == "5G_NR"
+    assert results[1]["timestamp"] == "2026-07-24T18:58:35.675536"
+    assert results[1]["mcc"] == "405"
+    assert results[1]["mnc"] == "868"
+    assert results[1]["lac"] == "4005"
+    assert results[1]["cid"] == "310020041"
+

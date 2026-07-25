@@ -995,3 +995,69 @@ def parse_location_dumpsys(text: str) -> list[dict[str, Any]]:
             })
             
     return results
+
+
+def parse_telephony_registry(text: str) -> list[dict[str, Any]]:
+    """Parse LTE and 5G NR cell identity registry changes from dumpsys telephony.registry text.
+
+    Looks for notification logs with CellIdentityLte or CellIdentityNr
+    and extracts mcc, mnc, lac/tac, cid/nci, pci, and timestamp.
+    """
+    results: list[dict[str, Any]] = []
+    if not text:
+        return results
+
+    # Match patterns like: 2026-07-24T18:56:28.909006 - notifyServiceStateForSubscriber:
+    # and extract the following CellIdentity details.
+    pattern = re.compile(
+        r"^\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+)\s+-\s+.*?(CellIdentityLte|CellIdentityNr):\{(.*?)\}",
+        re.MULTILINE
+    )
+
+    for match in pattern.finditer(text):
+        timestamp = match.group(1)
+        tech_type = match.group(2)
+        props_str = match.group(3)
+
+        # Parse key=value properties
+        props = {}
+        for part in re.split(r"[\s,]+", props_str):
+            if "=" in part:
+                parts = part.split("=", 1)
+                props[parts[0].strip()] = parts[1].strip()
+
+        if tech_type == "CellIdentityLte":
+            mcc = props.get("mMcc")
+            mnc = props.get("mMnc")
+            lac = props.get("mTac") or props.get("mLac")
+            cid = props.get("mCi")
+            if mcc and mnc and lac and cid:
+                results.append({
+                    "timestamp": timestamp,
+                    "type": "LTE",
+                    "mcc": mcc,
+                    "mnc": mnc,
+                    "lac": lac,
+                    "cid": cid,
+                    "pci": props.get("mPci"),
+                    "earfcn": props.get("mEarfcn")
+                })
+        elif tech_type == "CellIdentityNr":
+            mcc = props.get("mMcc")
+            mnc = props.get("mMnc")
+            lac = props.get("mTac")
+            cid = props.get("mNci")
+            if mcc and mnc and lac and cid:
+                results.append({
+                    "timestamp": timestamp,
+                    "type": "5G_NR",
+                    "mcc": mcc,
+                    "mnc": mnc,
+                    "lac": lac,
+                    "cid": cid,
+                    "pci": props.get("mPci"),
+                    "nrarfcn": props.get("mNrArfcn")
+                })
+
+    return results
+
