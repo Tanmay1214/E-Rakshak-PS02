@@ -86,6 +86,7 @@ def acquire_location_evidence(
     
     raw_location_dir = case_folder.exhibit_path / "raw" / "location"
     raw_location_dir.mkdir(parents=True, exist_ok=True)
+    case_folder.derived_dir.mkdir(parents=True, exist_ok=True)
     
     location_records = []
     

@@ -988,7 +988,7 @@ def cmd_collect_browser_evidence(args: argparse.Namespace) -> None:
 
     output_root = Path(args.output).resolve()
     case_folder = CaseFolder(output_root, args.case, args.exhibit)
-    case_path = case_folder.exhibit_path
+    case_path = case_folder.create()
 
     audit_path = case_path / "acquisition" / "audit.jsonl"
     manifest_path = case_path / "acquisition" / "acquisition_manifest.jsonl"
@@ -1046,7 +1046,7 @@ def cmd_collect_location_evidence(args: argparse.Namespace) -> None:
 
     output_root = Path(args.output).resolve()
     case_folder = CaseFolder(output_root, args.case, args.exhibit)
-    case_path = case_folder.exhibit_path
+    case_path = case_folder.create()
 
     audit_path = case_path / "acquisition" / "audit.jsonl"
     manifest_path = case_path / "acquisition" / "acquisition_manifest.jsonl"
