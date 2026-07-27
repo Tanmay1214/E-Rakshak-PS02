@@ -917,6 +917,32 @@ Outputs are written to:
 python -m erakshak.cli collect-location-evidence --case CASE001 --exhibit EXHIBIT001 --output cases --include-dumpsys --include-media-exif
 ```
 
+
+---
+
+## Building the Unified Timeline
+
+E-RAKSHAK supports building a unified forensic triage event timeline (Level 1 raw event timeline) to compile, sort, filter, and deduplicate all evidence events across all categories into a central, dashboard-ready preview.
+
+### Forensic Capabilities
+* **Time-Scope Windows**: Officers can build a timeline focusing on either a relative recent window (e.g. last 7 days) or a custom explicit date range (from/to dates).
+* **Cross-Lane Deduplication**: Automatically aggregates SMS and call logs from direct ADB content provider queries and collector app imports. When duplicates exist, it prioritizes `normalized_derived` over `collector_app_import` and `adb_content_provider`.
+* **Standard Grouping Buckets**: Automatically generates 15-minute and 1-hour rounded time buckets for every event, facilitating instant grouping on frontend dashboards.
+* **Tamper-Evident Hashing**: The compiled SQLite database (`evidence_index.db`), JSONL export (`timeline_events.jsonl`), and statistics JSON (`timeline_summary.json`) are hashed and added to the case manifest.
+* **Credential Protection**: Implements strict key/credential redaction to prevent raw WhatsApp encryption keys or other private credentials from ever appearing in the timeline database, logs, or exports.
+
+### Command Execution
+```bash
+# Mode A: Recent days window (default 7 days)
+python -m erakshak.cli build-timeline --case CASE001 --exhibit EXHIBIT001 --output cases --recent-days 7
+
+# Mode B: Custom explicit date range
+python -m erakshak.cli build-timeline --case CASE001 --exhibit EXHIBIT001 --output cases --from-date 2026-07-20 --to-date 2026-07-25
+
+# Filtering by category, source app, or type
+python -m erakshak.cli build-timeline --case CASE001 --exhibit EXHIBIT001 --output cases --recent-days 3 --category messages --source-app WhatsApp
+```
+
 ---
 
 ## Legal & Ethical Notice

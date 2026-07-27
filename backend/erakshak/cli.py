@@ -1095,6 +1095,67 @@ def cmd_collect_location_evidence(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_build_timeline(args: argparse.Namespace) -> None:
+    """Build the unified Level 1 event timeline."""
+    print_banner()
+    print(f"[*] Build Unified Timeline - Case: {args.case}  Exhibit: {args.exhibit}")
+
+    from erakshak.dashboard.timeline_builder import build_timeline
+
+    try:
+        summary = build_timeline(
+            case_folder_path=str(Path(args.output).resolve() / args.case / args.exhibit),
+            case_id=args.case,
+            exhibit_id=args.exhibit,
+            recent_days=args.recent_days,
+            from_date=args.from_date,
+            to_date=args.to_date,
+            timezone=args.timezone,
+            include_low_confidence=args.include_low_confidence,
+            rebuild=args.rebuild,
+            filter_category=args.category,
+            filter_source_app=args.source_app,
+            filter_source_type=args.source_type
+        )
+
+        if summary['total_events'] == 0:
+            print("\nE-RAKSHAK Timeline Build Complete")
+            print(f"Case: {summary['case_id']} / {summary['exhibit_id']}")
+            print("No timeline events found for selected date range.\n")
+            return
+
+        print("\nE-RAKSHAK Timeline Build Complete")
+        print(f"Case: {summary['case_id']} / {summary['exhibit_id']}")
+        
+        dr = summary['date_range']
+        if dr['mode'] == 'recent_days':
+            print(f"Date Range: last {summary['recent_days']} days")
+        else:
+            print(f"Date Range: {dr['from']} to {dr['to']}")
+            
+        print(f"Total Events: {summary['total_events']}")
+        
+        cats = ["messages", "calls", "media", "locations", "browser", "apps", "accounts", "network", "system"]
+        for cat in cats:
+            cnt = summary['counts_by_category'].get(cat, 0)
+            print(f"{cat.capitalize()}: {cnt}")
+            
+        sms_info = summary['dual_lane_sources']['sms']
+        print(f"SMS Sources: derived={sms_info['normalized_derived']}, adb_content={sms_info['adb_content_provider']}, collector={sms_info['collector_app_import']}, deduped={sms_info['deduplicated']}")
+        
+        call_info = summary['dual_lane_sources']['calls']
+        print(f"Call Sources: derived={call_info['normalized_derived']}, adb_content={call_info['adb_content_provider']}, collector={call_info['collector_app_import']}, deduped={call_info['deduplicated']}")
+        
+        print(f"Warnings: {len(summary['warnings'])}")
+        
+        print(f"Evidence Index: cases/{args.case}/{args.exhibit}/derived/evidence_index.db")
+        print(f"Timeline JSONL: cases/{args.case}/{args.exhibit}/derived/timeline_events.jsonl\n")
+
+    except Exception as e:
+        print(f"\n[ERROR] Timeline Build Failed: {str(e)}\n")
+        sys.exit(1)
+
+
 # ═════════════════════════════════════════════════════════════════════
 # Argument parser
 # ═════════════════════════════════════════════════════════════════════
@@ -1310,7 +1371,31 @@ def build_parser() -> argparse.ArgumentParser:
     
     sp_location.set_defaults(func=cmd_collect_location_evidence)
 
+    # ── build-timeline ────────────────────────────────────────────────
+    sp_timeline = subparsers.add_parser("build-timeline", help="Build the unified forensic triage timeline")
+    sp_timeline.add_argument("--case", required=True, help="Case identifier")
+    sp_timeline.add_argument("--exhibit", required=True, help="Exhibit identifier")
+    sp_timeline.add_argument("--output", default="cases", help="Output root directory")
+    
+    # Time window limits
+    sp_timeline.add_argument("--recent-days", type=int, default=7, help="Recent data window in days (default: 7)")
+    sp_timeline.add_argument("--from-date", help="Custom date range start (YYYY-MM-DD)")
+    sp_timeline.add_argument("--to-date", help="Custom date range end (YYYY-MM-DD)")
+    sp_timeline.add_argument("--timezone", default="Asia/Kolkata", help="Timezone context (default: Asia/Kolkata)")
+    
+    # Flags and filters
+    sp_timeline.add_argument("--include-low-confidence", action="store_true", help="Include low confidence events")
+    sp_timeline.add_argument("--rebuild", action="store_true", help="Clear and rebuild database timeline rows")
+    
+    # Optional dashboard filters
+    sp_timeline.add_argument("--category", help="Filter by event category")
+    sp_timeline.add_argument("--source-app", help="Filter by source app")
+    sp_timeline.add_argument("--source-type", help="Filter by source type")
+    
+    sp_timeline.set_defaults(func=cmd_build_timeline)
+
     return parser
+
 
 
 # ═════════════════════════════════════════════════════════════════════
