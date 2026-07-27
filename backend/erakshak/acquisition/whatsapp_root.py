@@ -357,8 +357,9 @@ def acquire_whatsapp_rooted_device(
                 cmd = [adb_path]
                 if serial and serial != "auto":
                     cmd += ["-s", serial]
-                cmd += ["exec-out", "su", "0", f"tar -C / -cf - {remote_path.lstrip('/')} 2>/dev/null"]
+                cmd += ["exec-out", "su", "0", "sh", "-c", f"tar -C / -cf - {remote_path.lstrip('/')} 2>/dev/null"]
                 method_used = "exec_out_tar_su_0"
+
             else:
                 cmd = [adb_path]
                 if serial and serial != "auto":

@@ -1263,7 +1263,94 @@ def cmd_unified_pipeline(args: argparse.Namespace) -> None:
         exhibit_id=args.exhibit
     )
 
+    # ── STAGE 3.5: PART-B PRIVATE MESSENGER ACQUISITION (ROOT ONLY) ──────
+    preflight_res = results.get("preflight") or {}
+    root_available = preflight_res.get("root_available") is True
+
+    if root_available:
+        print("\n" + "=" * 60)
+        print("  STAGE 3.5: PART-B PRIVATE MESSENGERS (ROOTED)")
+        print("=" * 60)
+        
+        # 1. WhatsApp
+        print("[*] Checking WhatsApp packages...")
+        from erakshak.part_b.whatsapp_root_pipeline import run_whatsapp_root_adb_pipeline
+        from erakshak.part_b.whatsapp_parse_pipeline import parse_decrypted_whatsapp
+
+        for pkg in ("com.whatsapp", "com.whatsapp.w4b"):
+            pkg_check = client.shell(["pm", "path", pkg])
+            if pkg_check.return_code == 0 and pkg_check.stdout.strip():
+                print(f"[*] Found WhatsApp variant: {pkg}. Initiating acquisition & parsing...")
+                try:
+                    acq_res = run_whatsapp_root_adb_pipeline(
+                        case_id=args.case,
+                        exhibit_id=args.exhibit,
+                        serial=serial,
+                        output_root=output_root,
+                        package_name=pkg,
+                        include_cache=True,
+                        include_files=True,
+                        include_shared_media=True,
+                        max_cache_bytes=None,
+                        timeout_seconds=600,
+                    )
+                    if acq_res.get("status") in ("success", "partial"):
+                        parse_res = parse_decrypted_whatsapp(
+                            case_id=args.case,
+                            exhibit_id=args.exhibit,
+                            output_root=output_root,
+                            source="rooted",
+                            package=pkg
+                        )
+                        print(f"  [OK] WhatsApp ({pkg}) processed successfully.")
+                    else:
+                        print(f"  [WARNING] WhatsApp ({pkg}) acquisition failed: {acq_res.get('errors')}")
+                except Exception as e:
+                    print(f"  [WARNING] WhatsApp ({pkg}) extraction/parsing failed: {e}")
+
+            else:
+                print(f"[-] WhatsApp ({pkg}) is not installed.")
+
+        # 2. Telegram
+        print("[*] Checking Telegram packages...")
+        pkg = "org.telegram.messenger"
+        pkg_check = client.shell(["pm", "path", pkg])
+        if pkg_check.return_code == 0 and pkg_check.stdout.strip():
+            print(f"[*] Found Telegram. Initiating acquisition & parsing...")
+            from erakshak.part_b.telegram_pipeline import run_telegram_pipeline
+            _run_module(
+                "telegram_pipeline",
+                run_telegram_pipeline,
+                adb=client,
+                case_folder=case_folder,
+                manifest=manifest,
+                audit=audit
+            )
+        else:
+            print("[-] Telegram is not installed.")
+
+        # 3. Signal
+        print("[*] Checking Signal packages...")
+        pkg = "org.thoughtcrime.securesms"
+        pkg_check = client.shell(["pm", "path", pkg])
+        if pkg_check.return_code == 0 and pkg_check.stdout.strip():
+            print(f"[*] Found Signal. Initiating acquisition & parsing...")
+            from erakshak.part_b.signal_pipeline import run_signal_pipeline
+            _run_module(
+                "signal_pipeline",
+                run_signal_pipeline,
+                adb=client,
+                case_folder=case_folder,
+                manifest=manifest,
+                audit=audit,
+                signal_db_key=None,
+                auto_extract_key=True
+            )
+        else:
+            print("[-] Signal is not installed.")
+
     # 4. Build Timeline
+
     print("\n" + "=" * 60)
     print("  STAGE 4: UNIFIED FORENSIC TIMELINE GENERATION")
     print("=" * 60)

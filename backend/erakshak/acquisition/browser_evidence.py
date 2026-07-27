@@ -142,7 +142,8 @@ def acquire_browser_evidence(
                         cmd = [adb_path]
                         if serial and serial != "auto":
                             cmd += ["-s", serial]
-                        cmd += ["exec-out", "su", "0", tar_cmd]
+                        cmd += ["exec-out", "su", "0", "sh", "-c", tar_cmd]
+
                     else:
                         cmd = [adb_path]
                         if serial and serial != "auto":
