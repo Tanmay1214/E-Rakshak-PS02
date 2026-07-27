@@ -1313,10 +1313,15 @@ def cmd_unified_pipeline(args: argparse.Namespace) -> None:
 
         # 2. Telegram
         print("[*] Checking Telegram packages...")
-        pkg = "org.telegram.messenger"
-        pkg_check = client.shell(["pm", "path", pkg])
-        if pkg_check.return_code == 0 and pkg_check.stdout.strip():
-            print(f"[*] Found Telegram. Initiating acquisition & parsing...")
+        pkg_found = None
+        for pkg in ("org.telegram.messenger", "org.telegram.messenger.web"):
+            pkg_check = client.shell(["pm", "path", pkg])
+            if pkg_check.return_code == 0 and pkg_check.stdout.strip():
+                pkg_found = pkg
+                break
+        
+        if pkg_found:
+            print(f"[*] Found Telegram package: {pkg_found}. Initiating acquisition & parsing...")
             from erakshak.part_b.telegram_pipeline import run_telegram_pipeline
             _run_module(
                 "telegram_pipeline",
@@ -1328,6 +1333,7 @@ def cmd_unified_pipeline(args: argparse.Namespace) -> None:
             )
         else:
             print("[-] Telegram is not installed.")
+
 
         # 3. Signal
         print("[*] Checking Signal packages...")
