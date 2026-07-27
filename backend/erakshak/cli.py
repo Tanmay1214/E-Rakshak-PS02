@@ -1156,6 +1156,147 @@ def cmd_build_timeline(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_unified_pipeline(args: argparse.Namespace) -> None:
+    """Run E-RAKSHAK end-to-end unified triage pipeline from acquisition to timeline."""
+    print_banner()
+    start_time = datetime.now(timezone.utc)
+    print(f"[*] STARTING END-TO-END UNIFIED TRIAGE PIPELINE")
+    print(f"[*] Case: {args.case}  Exhibit: {args.exhibit}")
+    print(f"[*] Started at {start_time.isoformat()}\n")
+
+    adb_path = getattr(args, "adb_path", "adb")
+    serial = _resolve_serial(args.serial, adb_path=adb_path)
+    output_root = Path(args.output).resolve()
+
+    # Infrastructure setup
+    case_folder = CaseFolder(output_root, args.case, args.exhibit)
+    case_path = case_folder.create()
+
+    audit_path = case_path / "acquisition" / "audit.jsonl"
+    manifest_path = case_path / "acquisition" / "acquisition_manifest.jsonl"
+    sha256sums_path = case_path / "hashes" / "sha256sums.txt"
+    sha256sums_path.parent.mkdir(parents=True, exist_ok=True)
+
+    audit = AuditLogger(audit_path, args.case, args.exhibit)
+    manifest = ManifestWriter(manifest_path, sha256sums_path, args.case, args.exhibit)
+    client = ADBClient(serial, audit, adb_path)
+
+    # 1. Run Part A Triage Acquisition
+    print("=" * 60)
+    print("  STAGE 1: PART-A TRIAGE ACQUISITION")
+    print("=" * 60)
+    
+    results: dict[str, Any] = {}
+    
+    def _run_module(name: str, fn, **kwargs) -> Any:
+        print(f"[*] Running module: {name}...")
+        try:
+            r = fn(**kwargs)
+            results[name] = r
+            print(f"  [OK] {name} completed.")
+            return r
+        except Exception as exc:
+            msg = f"{name} failed: {exc}"
+            results[name] = {"status": "failed", "error": str(exc)}
+            print(f"  [FAIL] {msg}")
+            audit.log(action="module_error", result="failed", error=msg)
+            return None
+
+    _run_module("preflight", run_preflight, adb=client, case_folder=case_folder, case_id=args.case, exhibit_id=args.exhibit, manifest=manifest, audit=audit)
+    _run_module("device_info", acquire_device_info, adb=client, case_folder=case_folder, manifest=manifest, audit=audit)
+    _run_module("installed_apps", acquire_installed_apps, adb=client, case_folder=case_folder, manifest=manifest, audit=audit)
+    _run_module("accounts", acquire_accounts, adb=client, case_folder=case_folder, manifest=manifest, audit=audit)
+    _run_module("timeline", acquire_timeline, adb=client, case_folder=case_folder, manifest=manifest, audit=audit)
+    _run_module("system_logs", acquire_system_logs, adb=client, case_folder=case_folder, manifest=manifest, audit=audit)
+    _run_module("network", acquire_network, adb=client, case_folder=case_folder, manifest=manifest, audit=audit)
+    
+    media_kwargs = {"adb": client, "case_folder": case_folder, "manifest": manifest, "audit": audit}
+    if getattr(args, "media_days", None) is not None:
+        media_kwargs["media_days"] = args.media_days
+    if getattr(args, "media_max_bytes", None) is not None:
+        media_kwargs["media_max_bytes"] = args.media_max_bytes
+    if getattr(args, "pull_media", None) is not None:
+        media_kwargs["pull_media"] = args.pull_media
+    _run_module("media", acquire_media, **media_kwargs)
+    
+    _run_module("call_logs", acquire_call_logs, adb=client, case_folder=case_folder, manifest=manifest, audit=audit, collector_folder=args.collector_export_folder)
+    _run_module("sms", acquire_sms, adb=client, case_folder=case_folder, manifest=manifest, audit=audit, collector_folder=args.collector_export_folder)
+    _run_module("contacts", acquire_contacts, adb=client, case_folder=case_folder, manifest=manifest, audit=audit, collector_folder=args.collector_export_folder)
+    
+    if args.collector_export_folder:
+        _run_module("collector_import", import_collector_export, collector_folder=args.collector_export_folder, case_folder=case_folder, manifest=manifest, audit=audit)
+
+    # 2. Run Browser Evidence
+    print("\n" + "=" * 60)
+    print("  STAGE 2: BROWSER EVIDENCE TRIAGE")
+    print("=" * 60)
+    from erakshak.acquisition.browser_evidence import acquire_browser_evidence
+    _run_module(
+        "browser_evidence",
+        acquire_browser_evidence,
+        adb=client if args.browser_mode in ("non-root", "rooted") else None,
+        case_folder=case_folder,
+        manifest=manifest,
+        audit=audit,
+        mode=args.browser_mode,
+        import_root=args.browser_import_root,
+        case_id=args.case,
+        exhibit_id=args.exhibit
+    )
+
+    # 3. Run Location Evidence
+    print("\n" + "=" * 60)
+    print("  STAGE 3: LOCATION EVIDENCE TRIAGE")
+    print("=" * 60)
+    from erakshak.acquisition.location_evidence import acquire_location_evidence
+    _run_module(
+        "location_evidence",
+        acquire_location_evidence,
+        adb=client,
+        case_folder=case_folder,
+        manifest=manifest,
+        audit=audit,
+        include_dumpsys=args.location_include_dumpsys,
+        include_media_exif=args.location_include_media_exif,
+        include_cell_observations=args.location_include_cell_observations,
+        case_id=args.case,
+        exhibit_id=args.exhibit
+    )
+
+    # 4. Build Timeline
+    print("\n" + "=" * 60)
+    print("  STAGE 4: UNIFIED FORENSIC TIMELINE GENERATION")
+    print("=" * 60)
+    from erakshak.dashboard.timeline_builder import build_timeline
+    try:
+        summary = build_timeline(
+            case_folder_path=str(case_path),
+            case_id=args.case,
+            exhibit_id=args.exhibit,
+            recent_days=args.recent_days,
+            from_date=args.from_date,
+            to_date=args.to_date,
+            timezone=args.timezone,
+            include_low_confidence=args.include_low_confidence,
+            rebuild=args.rebuild,
+            filter_category=args.category,
+            filter_source_app=args.source_app,
+            filter_source_type=args.source_type
+        )
+        
+        print(f"\n[+] Unified Timeline built successfully!")
+        print(f"    Total events indexed: {summary['total_events']}")
+        print(f"    Timeline SQLite Database: cases/{args.case}/{args.exhibit}/derived/evidence_index.db")
+        print(f"    Timeline JSONL Export: cases/{args.case}/{args.exhibit}/derived/timeline_events.jsonl")
+    except Exception as e:
+        print(f"\n[ERROR] Timeline Build Failed: {e}")
+        audit.log(action="timeline_build_error", result="failed", error=str(e))
+
+    end_time = datetime.now(timezone.utc)
+    elapsed = (end_time - start_time).total_seconds()
+    print(f"\n[*] END-TO-END UNIFIED TRIAGE PIPELINE COMPLETE in {elapsed:.2f} seconds.")
+
+
 # ═════════════════════════════════════════════════════════════════════
 # Argument parser
 # ═════════════════════════════════════════════════════════════════════
@@ -1394,7 +1535,46 @@ def build_parser() -> argparse.ArgumentParser:
     
     sp_timeline.set_defaults(func=cmd_build_timeline)
 
+    # ── unified-pipeline ──────────────────────────────────────────────
+    sp_un = subparsers.add_parser("unified-pipeline", help="Run full end-to-end triage: acquisition of Part A, browser evidence, location evidence, and timeline compilation")
+    sp_un.add_argument("--case", required=True, help="Case identifier")
+    sp_un.add_argument("--exhibit", required=True, help="Exhibit identifier")
+    sp_un.add_argument("--output", default="cases", help="Output root directory")
+    sp_un.add_argument("--serial", default="auto", help="ADB device serial or 'auto'")
+    sp_un.add_argument("--adb-path", default="adb", help="Path to ADB binary")
+    sp_un.add_argument("--collector-export-folder", help="Path to local folder with imported companion collector zip/files")
+    
+    # Media configurations
+    sp_un.add_argument("--media-days", type=int, help="Limit media files modified in the last N days")
+    sp_un.add_argument("--media-max-bytes", type=int, help="Limit total bytes of media files pulled")
+    sp_un.add_argument("--pull-media", action="store_true", help="Download/pull media files from target directories")
+    
+    # Browser evidence configs
+    sp_un.add_argument("--browser-mode", choices=["non-root", "rooted", "imported"], default="non-root", help="Browser access mode (default: non-root)")
+    sp_un.add_argument("--browser-import-root", help="Path to imported filesystem dump root (for browser imported mode)")
+    
+    # Location evidence configs
+    sp_un.add_argument("--location-include-dumpsys", action="store_true", default=True, help="Include dumpsys snapshots in location evidence (default: true)")
+    sp_un.add_argument("--location-include-media-exif", action="store_true", default=True, help="Include media EXIF data in location evidence (default: true)")
+    sp_un.add_argument("--location-include-cell-observations", action="store_true", default=True, help="Include cell observations in location evidence (default: true)")
+    
+    # Timeline builder configs
+    sp_un.add_argument("--recent-days", type=int, default=7, help="Recent timeline window in days (default: 7)")
+    sp_un.add_argument("--from-date", help="Custom timeline date range start (YYYY-MM-DD)")
+    sp_un.add_argument("--to-date", help="Custom timeline date range end (YYYY-MM-DD)")
+    sp_un.add_argument("--timezone", default="Asia/Kolkata", help="Timezone context (default: Asia/Kolkata)")
+    sp_un.add_argument("--include-low-confidence", action="store_true", help="Include low confidence events in timeline")
+    sp_un.add_argument("--rebuild", action="store_true", help="Clear and rebuild database timeline rows")
+    
+    # Timeline optional filters
+    sp_un.add_argument("--category", help="Filter timeline by category")
+    sp_un.add_argument("--source-app", help="Filter timeline by source app")
+    sp_un.add_argument("--source-type", help="Filter timeline by source type")
+    
+    sp_un.set_defaults(func=cmd_unified_pipeline)
+
     return parser
+
 
 
 

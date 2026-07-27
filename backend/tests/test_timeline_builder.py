@@ -189,3 +189,23 @@ def test_timeline_builder_filters(tmp_path: Path) -> None:
     assert summary["total_events"] == 1
     assert summary["counts_by_category"].get("calls") == 1
     assert "messages" not in summary["counts_by_category"]
+
+
+def test_unified_pipeline_cli_parsing() -> None:
+    from erakshak.cli import build_parser
+    parser = build_parser()
+    
+    args = parser.parse_args([
+        "unified-pipeline",
+        "--case", "CASE004",
+        "--exhibit", "EX004",
+        "--output", "cases",
+        "--serial", "auto",
+        "--browser-mode", "non-root",
+        "--recent-days", "5"
+    ])
+    assert args.command == "unified-pipeline"
+    assert args.case == "CASE004"
+    assert args.exhibit == "EX004"
+    assert args.recent_days == 5
+

@@ -943,7 +943,24 @@ python -m erakshak.cli build-timeline --case CASE001 --exhibit EXHIBIT001 --outp
 python -m erakshak.cli build-timeline --case CASE001 --exhibit EXHIBIT001 --output cases --recent-days 3 --category messages --source-app WhatsApp
 ```
 
+
 ---
+
+## Unified End-to-End Triage Pipeline
+
+E-RAKSHAK provides a single unified command that automates the entire forensic triage workflow: **Part-A device acquisition -> browser history indexing -> location evidence aggregation -> timeline compilation and database indexing** under one unified step.
+
+### Command Execution
+```bash
+# Run end-to-end logical triage with default settings (last 7 days timeline)
+python -m erakshak.cli unified-pipeline --case CASE001 --exhibit EXHIBIT001 --output cases
+
+# Run unified triage with custom timeline filters, and include low-confidence events
+python -m erakshak.cli unified-pipeline --case CASE001 --exhibit EXHIBIT001 --output cases --from-date 2026-07-20 --to-date 2026-07-25 --include-low-confidence
+```
+
+---
+
 
 ## Legal & Ethical Notice
 
