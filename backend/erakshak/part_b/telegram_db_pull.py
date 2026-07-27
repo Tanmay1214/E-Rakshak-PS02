@@ -17,6 +17,9 @@ Design constraints
   only the absence of a *required* primary DB is treated as significant.
 - **Partial cleanup**: if a pull leaves the local file absent, the empty/
   partial path is removed and the artifact is never reported as acquired.
+- **Root mode**: when root_method is ``su`` or ``su_0``, private paths under
+  /data/data/ are probed via ``su 0 ls`` and pulled via
+  ``exec-out su 0 sh -c 'tar -C / -cf - <path>'``.
 
 Usage::
 
@@ -32,6 +35,9 @@ Usage::
 
 from __future__ import annotations
 
+import subprocess
+import tarfile
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -89,6 +95,97 @@ class RemoteProbeResult:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _root_probe_remote_path(adb: "ADBClient", remote_path: str, root_method: str) -> RemoteProbeResult:
+    """Probe *remote_path* via root (su/su_0) when plain ls is denied."""
+    if root_method in ("su", "su_0"):
+        cmd = ["su", "0", "ls", "-la", remote_path]
+    else:
+        return RemoteProbeResult(state="inaccessible")
+
+    result = adb.shell(cmd, timeout=DEFAULT_ADB_TIMEOUT, audit_action=f"root_probe_{Path(remote_path).name}")
+    stderr_lower = result.stderr.lower()
+    stdout_lower = result.stdout.lower()
+    if result.timed_out or result.return_code == -127:
+        return RemoteProbeResult(state="probe_failed", stderr=result.stderr[:500])
+    if "permission denied" in stderr_lower or "permission denied" in stdout_lower:
+        return RemoteProbeResult(state="inaccessible", stderr=result.stderr[:500])
+    if "no such file" in stderr_lower or "no such file" in stdout_lower:
+        return RemoteProbeResult(state="not_present", stderr=result.stderr[:500])
+    if result.return_code != 0 and not result.stdout.strip():
+        return RemoteProbeResult(state="probe_failed", stderr=result.stderr[:500])
+    parent_dir = str(Path(remote_path).parent)
+    entries = parse_ls_output(result.stdout, current_dir_hint=parent_dir)
+    remote_size: int | None = None
+    for entry in entries:
+        if entry.get("type") == "file":
+            remote_size = entry.get("size")
+            break
+    return RemoteProbeResult(state="accessible", remote_size=remote_size, stderr=result.stderr[:500])
+
+
+def _root_exec_out_tar_pull(
+    adb: "ADBClient",
+    remote_path: str,
+    local_path: Path,
+    adb_path: str,
+    root_method: str,
+    serial: str,
+    audit: "AuditLogger",
+    artifact_class: str,
+) -> dict:
+    """Pull a single private file using exec-out + tar via su.
+
+    Returns dict with keys: status, sha256, local_size, volatile, warning, error.
+    """
+    # Build command: adb [-s serial] exec-out su 0 sh -c 'tar -C / -cf - <path>'
+    cmd = [adb_path]
+    if serial and serial != "auto":
+        cmd += ["-s", serial]
+    stripped = remote_path.lstrip("/")
+    cmd += ["exec-out", "su", "0", "sh", "-c", f"tar -C / -cf - {stripped} 2>/dev/null"]
+
+    try:
+        tar_proc = subprocess.run(cmd, capture_output=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        return {"status": "failed", "sha256": "", "local_size": None, "volatile": False, "warning": "", "error": "exec-out tar timed out"}
+    except Exception as exc:
+        return {"status": "failed", "sha256": "", "local_size": None, "volatile": False, "warning": "", "error": str(exc)}
+
+    if tar_proc.returncode != 0 or len(tar_proc.stdout) < 512:
+        err = (tar_proc.stderr or b"").decode(errors="replace")[:300]
+        return {"status": "failed", "sha256": "", "local_size": None, "volatile": False, "warning": "", "error": f"tar returned empty/failed: {err}"}
+
+    # Write tar to temp file, extract only the target file
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as tmp:
+            tmp.write(tar_proc.stdout)
+            tmp_path = Path(tmp.name)
+
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(tmp_path, "r") as tf:
+            members = [m for m in tf.getmembers() if m.isfile() and not m.name.startswith("../") and ".." not in m.name]
+            for member in members:
+                # extract to local_path regardless of internal tar name
+                src_file = tf.extractfile(member)
+                if src_file:
+                    with open(local_path, "wb") as dst:
+                        dst.write(src_file.read())
+                    break
+        tmp_path.unlink(missing_ok=True)
+    except Exception as exc:
+        return {"status": "failed", "sha256": "", "local_size": None, "volatile": False, "warning": "", "error": f"tar extract failed: {exc}"}
+
+    if not local_path.exists():
+        return {"status": "failed", "sha256": "", "local_size": None, "volatile": False, "warning": "", "error": "file not found after tar extract"}
+
+    sha256 = hash_file(local_path)
+    local_size = local_path.stat().st_size
+    audit.log(action="telegram_db_root_tar_pulled", command_category="file_pull",
+              command_redacted=f"exec-out su 0 tar {remote_path}", result="acquired",
+              output_path=str(local_path))
+    return {"status": "acquired", "sha256": sha256, "local_size": local_size, "volatile": False, "warning": "", "error": ""}
 
 
 def _probe_remote_path(adb: "ADBClient", remote_path: str) -> RemoteProbeResult:
@@ -301,6 +398,9 @@ def _acquire_db_group(
     dest_dir: Path,
     manifest: "ManifestWriter",
     audit: "AuditLogger",
+    root_method: str = "none",
+    adb_path: str = "adb",
+    serial: str = "",
 ) -> dict:
     """Pull one DB group (primary DB + sidecars) for *profile*.
 
@@ -342,6 +442,31 @@ def _acquire_db_group(
         return summary
 
     if probe.state == "inaccessible":
+        # Try root pull if root is available
+        if root_method in ("su", "su_0"):
+            root_probe = _root_probe_remote_path(adb, remote_path, root_method)
+            if root_probe.state == "accessible":
+                local_filename = db_group.relative_path.replace("/", "_")
+                local_path = dest_dir / local_filename
+                pull_info = _root_exec_out_tar_pull(adb, remote_path, local_path, adb_path, root_method, serial, audit, artifact_class)
+                if pull_info["status"] == "acquired":
+                    manifest.add_file(artifact_class, "exec_out_tar_su", remote_path, local_path,
+                                      status=STATUS_ACQUIRED, reason_code="", started_at=started_at, completed_at=_now_iso())
+                    summary["db_status"] = STATUS_ACQUIRED
+                    summary["sha256"] = pull_info["sha256"]
+                    # pull sidecars after main DB succeeds
+                    for ext in SQLITE_SIDECAR_EXTENSIONS:
+                        sidecar_remote = remote_path + ext
+                        sidecar_local = dest_dir / (local_filename + ext)
+                        sc_info = _root_exec_out_tar_pull(adb, sidecar_remote, sidecar_local, adb_path, root_method, serial, audit, artifact_class + "_sidecar")
+                        summary["sidecars"].append({"remote_path": sidecar_remote, "status": sc_info["status"], "sha256": sc_info["sha256"]})
+                    return summary
+                else:
+                    summary["warnings"].append(f"Root tar pull failed for {remote_path}: {pull_info['error']}")  
+            elif root_probe.state == "not_present":
+                summary["db_status"] = "not_present"
+                return summary
+
         manifest.add_status_record(
             artifact_class=artifact_class,
             source_type="adb_shell",
@@ -522,6 +647,9 @@ def acquire_telegram_databases(
     case_folder: "CaseFolder",
     manifest: "ManifestWriter",
     audit: "AuditLogger",
+    root_method: str = "none",
+    adb_path: str = "adb",
+    serial: str = "",
 ) -> dict:
     """Pull Telegram SQLite databases and inventory shared media.
 
@@ -608,6 +736,9 @@ def acquire_telegram_databases(
                 dest_dir=pkg_dir,
                 manifest=manifest,
                 audit=audit,
+                root_method=root_method,
+                adb_path=adb_path,
+                serial=serial,
             )
             db_results_for_pkg.append(db_summary)
 

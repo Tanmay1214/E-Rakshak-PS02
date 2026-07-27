@@ -1263,9 +1263,10 @@ def cmd_unified_pipeline(args: argparse.Namespace) -> None:
         exhibit_id=args.exhibit
     )
 
-    # ── STAGE 3.5: PART-B PRIVATE MESSENGER ACQUISITION (ROOT ONLY) ──────
+    # ── STAGE 3.5: PART-B PRIVATE MESSENGER ACQUISITION (ROOT ONLY) ────
     preflight_res = results.get("preflight") or {}
     root_available = preflight_res.get("root_available") is True
+    root_method = preflight_res.get("root_method") or ("su_0" if root_available else "none")
 
     if root_available:
         print("\n" + "=" * 60)
@@ -1329,7 +1330,10 @@ def cmd_unified_pipeline(args: argparse.Namespace) -> None:
                 adb=client,
                 case_folder=case_folder,
                 manifest=manifest,
-                audit=audit
+                audit=audit,
+                root_method=root_method,
+                adb_path=adb_path,
+                serial=serial,
             )
         else:
             print("[-] Telegram is not installed.")
@@ -1350,7 +1354,10 @@ def cmd_unified_pipeline(args: argparse.Namespace) -> None:
                 manifest=manifest,
                 audit=audit,
                 signal_db_key=None,
-                auto_extract_key=True
+                auto_extract_key=True,
+                root_method=root_method,
+                adb_path=adb_path,
+                serial=serial,
             )
         else:
             print("[-] Signal is not installed.")

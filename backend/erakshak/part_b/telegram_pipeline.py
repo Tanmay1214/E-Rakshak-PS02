@@ -22,6 +22,9 @@ def run_telegram_pipeline(
     case_folder: CaseFolder,
     manifest: ManifestWriter,
     audit: AuditLogger,
+    root_method: str = "none",
+    adb_path: str = "adb",
+    serial: str = "",
 ) -> dict[str, Any]:
     """Execute the full Telegram MVP pipeline.
 
@@ -35,7 +38,8 @@ def run_telegram_pipeline(
 
     # 1. Acquisition
     print("[*] Starting Telegram acquisition...")
-    acq_results = acquire_telegram_databases(adb, case_folder, manifest, audit)
+    acq_results = acquire_telegram_databases(adb, case_folder, manifest, audit,
+                                             root_method=root_method, adb_path=adb_path, serial=serial)
     
     # 2. Setup parsing outputs
     derived_telegram_dir = case_folder.derived_dir / "apps" / "telegram"

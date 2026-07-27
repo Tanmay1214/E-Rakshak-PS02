@@ -4,12 +4,18 @@ This parser is intentionally conservative. Signal Android databases are usually
 SQLCipher-encrypted; when a pulled DB is encrypted or uses an unknown schema,
 the parser reports ``unsupported``. If a decrypted/plain SQLite database is
 provided from an authorized root/import lane, common tables are normalized.
+
+When a ``db_key`` is provided and ``sqlcipher3``/``pysqlcipher3`` are not
+installed, the parser falls back to a pure-Python AES-CBC decryptor
+(:mod:`erakshak.part_b.signal_sqlcipher_decrypt`) that requires only
+``pycryptodome``.
 """
 
 from __future__ import annotations
 
 import sqlite3
 import re
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,6 +31,7 @@ class SignalParser:
         self.tables: list[str] = []
         self.errors: list[str] = []
         self._conn: sqlite3.Connection | None = None
+        self._decrypted_tmp: Path | None = None  # temp plain-SQLite file
 
     def __enter__(self) -> "SignalParser":
         self.open()
@@ -47,20 +54,32 @@ class SignalParser:
             self._conn = None
 
     def _connect(self) -> Any:
-        """Open the DB using SQLCipher when a key is supplied, else sqlite3."""
+        """Open the DB using SQLCipher when a key is supplied, else sqlite3.
+
+        Priority:
+        1. Plain sqlite3 (no key)
+        2. sqlcipher3 / pysqlcipher3 (if installed)
+        3. Pure-Python AES-CBC decryptor via pycryptodome (always available)
+        """
         if not self.db_key:
             return sqlite3.connect(f"{self.db_path.absolute().as_uri()}?mode=ro", uri=True)
 
+        # ── Try native SQLCipher bindings first ──────────────────────────────
         try:
             from sqlcipher3 import dbapi2 as sqlcipher_dbapi
+            return self._open_sqlcipher(sqlcipher_dbapi)
         except ImportError:
-            try:
-                from pysqlcipher3 import dbapi2 as sqlcipher_dbapi  # type: ignore[no-redef]
-            except ImportError as exc:
-                raise sqlite3.DatabaseError(
-                    "SQLCipher support is not installed. Install sqlcipher3-wheels or pysqlcipher3."
-                ) from exc
+            pass
+        try:
+            from pysqlcipher3 import dbapi2 as sqlcipher_dbapi  # type: ignore[no-redef]
+            return self._open_sqlcipher(sqlcipher_dbapi)
+        except ImportError:
+            pass
 
+        # ── Fallback: pure-Python decryptor ──────────────────────────────────
+        return self._open_via_pure_python_decrypt()
+
+    def _open_sqlcipher(self, sqlcipher_dbapi: Any) -> Any:
         conn = sqlcipher_dbapi.connect(str(self.db_path))
         conn.execute("PRAGMA cipher_default_kdf_iter = 1")
         conn.execute("PRAGMA cipher_default_page_size = 4096")
@@ -70,6 +89,24 @@ class SignalParser:
         conn.execute("PRAGMA kdf_iter = 1")
         conn.execute("PRAGMA cipher_page_size = 4096")
         conn.execute("SELECT count(*) FROM sqlite_master")
+        return conn
+
+    def _open_via_pure_python_decrypt(self) -> Any:
+        """Decrypt to a temp plain-SQLite file and open it with stdlib sqlite3."""
+        from erakshak.part_b.signal_sqlcipher_decrypt import decrypt_signal_db
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix="erakshak_signal_dec_"))
+        tmp_plain = tmp_dir / f"{self.db_path.stem}_plain.db"
+        self._decrypted_tmp = tmp_dir  # whole dir so we can rmtree later
+
+        result = decrypt_signal_db(self.db_path, self.db_key, tmp_plain)
+        if result["status"] != "success":
+            raise sqlite3.DatabaseError(
+                f"Pure-Python decryptor failed: {result['error']}"
+            )
+
+        conn = sqlite3.connect(f"{tmp_plain.absolute().as_uri()}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
         return conn
 
     @staticmethod
@@ -85,6 +122,13 @@ class SignalParser:
         if self._conn:
             self._conn.close()
             self._conn = None
+        if self._decrypted_tmp and self._decrypted_tmp.exists():
+            import shutil
+            try:
+                shutil.rmtree(self._decrypted_tmp, ignore_errors=True)
+            except Exception:
+                pass
+            self._decrypted_tmp = None
 
     def _detect_schema(self) -> None:
         if not self._conn:

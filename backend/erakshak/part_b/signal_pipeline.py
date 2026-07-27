@@ -23,11 +23,15 @@ def run_signal_pipeline(
     audit: AuditLogger,
     signal_db_key: str | None = None,
     auto_extract_key: bool = False,
+    root_method: str = "none",
+    adb_path: str = "adb",
+    serial: str = "",
 ) -> dict[str, Any]:
     """Execute Signal package detection, DB acquisition, and parsing."""
     audit.log(action="signal_pipeline_start", result="started")
     print("[*] Starting Signal acquisition...")
-    acq_results = acquire_signal_databases(adb, case_folder, manifest, audit)
+    acq_results = acquire_signal_databases(adb, case_folder, manifest, audit,
+                                           root_method=root_method, adb_path=adb_path, serial=serial)
 
     derived_signal_dir = case_folder.derived_dir / "apps" / "signal"
     summary: dict[str, Any] = {
