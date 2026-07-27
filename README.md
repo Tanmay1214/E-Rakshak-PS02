@@ -948,7 +948,7 @@ python -m erakshak.cli build-timeline --case CASE001 --exhibit EXHIBIT001 --outp
 
 ## Unified End-to-End Triage Pipeline
 
-E-RAKSHAK provides a single unified command that automates the entire forensic triage workflow: **Part-A device acquisition -> browser history indexing -> location evidence aggregation -> timeline compilation and database indexing** under one unified step.
+E-RAKSHAK provides a single unified command that automates the entire forensic triage workflow: **Part-A device acquisition -> browser history indexing -> location evidence aggregation -> Part-B private messengers acquisition (if root is present) -> timeline compilation and database indexing** under one unified step.
 
 ### Command Execution
 ```bash
@@ -958,6 +958,14 @@ python -m erakshak.cli unified-pipeline --case CASE001 --exhibit EXHIBIT001 --ou
 # Run unified triage with custom timeline filters, and include low-confidence events
 python -m erakshak.cli unified-pipeline --case CASE001 --exhibit EXHIBIT001 --output cases --from-date 2026-07-20 --to-date 2026-07-25 --include-low-confidence
 ```
+
+### Automated Root-Mode Part B Messengers Extraction
+If the target device is detected as rooted during the Stage 1 preflight checks (supporting standard `su` or `su 0`), the `unified-pipeline` automatically orchestrates Stage 3.5:
+1. **WhatsApp (`com.whatsapp` / `com.whatsapp.w4b`)**: Automatically executes the rooted ADB pipeline, pulls private databases, performs WAL/slack space deleted message carving, injects recovered messages back, and builds HTML chat previews.
+2. **Telegram (`org.telegram.messenger` / `org.telegram.messenger.web`)**: Automatically detects the package, pulls the SQLite databases, extracts serialized chat blobs, and exports normalized dialog and message JSONL files.
+3. **Signal (`org.thoughtcrime.securesms`)**: Automatically pulls private database files, extracts the SQLCipher decryption key directly from memory, decrypts and parses database logs, and indexes Signal chats.
+4. **Timeline Integration**: Automatically parses all extracted messaging chats and aggregates them as events in `derived/evidence_index.db` and the unified timeline exports.
+
 
 ---
 
