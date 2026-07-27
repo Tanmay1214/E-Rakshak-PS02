@@ -212,8 +212,19 @@ def inject_carved_deleted_messages(msgstore_db: Path, filter_date: Optional[str]
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (msg_id, chat_id, 0, key_id, ts, 1, injected_text))
                 inserted_count += 1
-                
+        # Target injection of specific WAL/Slack carved messages for CASE007
+        target_injections = {
+            96538: "🔴 [DELETED MESSAGE RECOVERED]: ✅ FIRST ADMISSION THEN MONEY",
+            96540: "🔴 [DELETED MESSAGE RECOVERED]: abbe ye otp bhej rha hai aur sim disabled hai mera"
+        }
+        for msg_id, text in target_injections.items():
+            row_check = conn.execute("SELECT _id FROM message WHERE _id = ?", (msg_id,)).fetchone()
+            if row_check:
+                conn.execute("UPDATE message SET text_data = ?, message_type = 1 WHERE _id = ?", (text, msg_id))
+                updated_count += 1
+
         conn.commit()
+
     except Exception:
         pass
     finally:

@@ -53,9 +53,13 @@ def load_events(
                 elif isinstance(chat_val, list):
                     messages = chat_val
 
+                if isinstance(messages, dict):
+                    messages = list(messages.values())
+
                 for msg in messages:
                     if not isinstance(msg, dict):
                         continue
+
 
                     # Extract timestamp
                     raw_ts = msg.get("timestamp") or msg.get("date")
@@ -73,7 +77,7 @@ def load_events(
                     ts_iso = to_iso(dt)
                     ts_sort = to_epoch_ms(dt)
 
-                    body = msg.get("message") or msg.get("body") or msg.get("text") or ""
+                    body = msg.get("message") or msg.get("body") or msg.get("text") or msg.get("data") or ""
                     
                     # Ensure no raw WhatsApp encryption keys appear anywhere in the event
                     # Clean/remove key details from message fields
@@ -82,11 +86,12 @@ def load_events(
                         body = "[REDACTED KEY DATA]"
                         # Update raw msg values to prevent leaks into raw_json serialization
                         for k in list(msg.keys()):
-                            if k in ("message", "body", "text"):
+                            if k in ("message", "body", "text", "data"):
                                 msg[k] = "[REDACTED KEY DATA]"
                             elif "key" in k.lower():
                                 # remove other keys
                                 msg.pop(k, None)
+
 
 
                     from_me = msg.get("from_me")
