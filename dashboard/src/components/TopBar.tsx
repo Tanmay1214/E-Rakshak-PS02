@@ -1,15 +1,15 @@
 import type { CaseSummary } from '../types/evidence';
-import { Download, ShieldCheck, AlertTriangle } from 'lucide-react';
-import { exportReport, verifyHashes } from '../services/api';
+import { Download, Shield, Calendar, Folder, MoreVertical } from 'lucide-react';
+import { exportReport } from '../services/api';
 
 interface TopBarProps {
   summary: CaseSummary | null;
   timeRange: string;
-  warningsCount?: number;
-  onShowWarnings?: () => void;
+  onTimeRangeChange: (range: string) => void;
 }
 
-export default function TopBar({ summary, timeRange, warningsCount = 0, onShowWarnings }: TopBarProps) {
+export default function TopBar({ summary, timeRange, onTimeRangeChange }: TopBarProps) {
+  
   const handleExport = async () => {
     try {
       await exportReport();
@@ -19,120 +19,128 @@ export default function TopBar({ summary, timeRange, warningsCount = 0, onShowWa
     }
   };
 
-  const handleVerify = async () => {
-    try {
-      await verifyHashes();
-      alert('Hashes verified successfully.');
-    } catch (err) {
-      alert('Verification failed.');
-    }
-  };
-
-  const getTimeRangeLabel = (range: string) => {
-    switch (range) {
-      case '24h': return 'Last 24 Hours';
-      case '7d': return 'Last 7 Days';
-      case 'custom': return 'Custom Range';
-      default: return 'All Time';
-    }
-  };
-
-  // Determine forensic status badge styling
-  const getForensicStatus = () => {
-    if (!summary) return { label: 'Unknown', style: 'bg-slate-500/10 text-slate-400 border border-slate-500/30' };
+  const getAcquisitionStatus = () => {
+    if (!summary) return { text: 'No Device', style: 'bg-slate-500/10 text-slate-400 border border-slate-500/30' };
     
-    const status = summary.acquisition_status;
-    if (status === 'Complete' && warningsCount === 0) {
-      return { 
-        label: 'Verified & Built', 
-        style: 'bg-success/20 text-success border border-success/35' 
+    const hasTimeline = (summary.counts.timeline_events || 0) > 0;
+    const hasWarnings = (summary.warnings?.length || 0) > 0 || (summary.missing_sources?.length || 0) > 0;
+    
+    if (hasTimeline) {
+      if (hasWarnings) {
+        return {
+          text: 'Partial Acquisition',
+          style: 'bg-warning/10 text-warning border-warning/20'
+        };
+      }
+      return {
+        text: 'Timeline Built',
+        style: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
       };
     }
-    if (status === 'Partial' || warningsCount > 0) {
-      return { 
-        label: 'Partial (Warnings)', 
-        style: 'bg-warning/20 text-warning border border-warning/35' 
-      };
-    }
-    return { 
-      label: 'Acquisition Failed', 
-      style: 'bg-danger/20 text-danger border border-danger/35' 
+    
+    return {
+      text: 'Acquisition Failed',
+      style: 'bg-danger/10 text-danger border-danger/20'
     };
   };
 
-  const forensicStatus = getForensicStatus();
+  const status = getAcquisitionStatus();
 
   return (
-    <div className="flex flex-col md:flex-row md:items-center justify-between px-6 py-3.5 bg-panel border-b border-border text-xs gap-3">
-      {/* Tool Branding */}
+    <div className="flex items-center justify-between px-6 py-2.5 bg-panel border-b border-border text-xs z-50 flex-shrink-0 select-none">
+      
+      {/* Left Title & Branding */}
       <div className="flex items-center gap-3">
-        <div className="flex flex-col">
-          <h1 className="text-base font-black tracking-wider text-accent leading-none">E-RAKSHAK</h1>
-          <span className="text-text-secondary text-[9px] font-bold uppercase tracking-wider mt-0.5">Forensic Triage Suite</span>
+        <div className="w-9 h-9 rounded-lg bg-accent/15 border border-accent/30 flex items-center justify-center text-accent shadow-sm">
+          <Shield className="w-5 h-5 fill-accent/10" />
         </div>
-        <div className={`px-2.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${forensicStatus.style}`}>
-          {forensicStatus.label}
+        <div className="flex flex-col">
+          <h1 className="text-sm font-black tracking-wider text-text-primary uppercase leading-none">E-RAKSHAK</h1>
+          <span className="text-text-secondary text-[9px] font-bold tracking-wide mt-0.5">Rapid Evidence Triage</span>
+        </div>
+        
+        {/* Rapid Evidence Triage badge wrapper */}
+        <div className="h-6 w-px bg-border/60 mx-1.5" />
+        <div className="flex flex-col">
+          <span className="text-text-primary text-[11px] font-bold">Rapid Evidence Triage</span>
+          <span className="text-text-secondary text-[8px] font-semibold mt-0.5">Android Forensic Preview Tool</span>
         </div>
       </div>
-      
-      {/* Case Identity Metadata */}
+
+      {/* Center metadata boxes */}
       {summary && (
-        <div className="flex flex-wrap items-center gap-3 text-text-secondary font-medium">
-          <div className="px-3 py-1.5 bg-panel-alt rounded-lg border border-border">
-            Case ID: <span className="text-text-primary font-bold font-mono">{summary.case_id}</span>
+        <div className="flex items-center gap-3">
+          {/* Case ID */}
+          <div className="flex flex-col px-3 py-1 bg-panel-alt rounded border border-border">
+            <span className="text-[8px] text-text-secondary font-bold uppercase tracking-wider">Case ID</span>
+            <span className="text-text-primary font-bold font-mono text-[10px] mt-0.5">{summary.case_id}</span>
           </div>
-          <div className="px-3 py-1.5 bg-panel-alt rounded-lg border border-border">
-            Exhibit: <span className="text-text-primary font-bold font-mono">{summary.exhibit_id}</span>
+
+          {/* Evidence ID */}
+          <div className="flex flex-col px-3 py-1 bg-panel-alt rounded border border-border">
+            <span className="text-[8px] text-text-secondary font-bold uppercase tracking-wider">Evidence ID</span>
+            <span className="text-text-primary font-bold font-mono text-[10px] mt-0.5">{summary.exhibit_id}</span>
           </div>
-          <div className="hidden lg:flex gap-3 px-3 py-1.5 bg-panel-alt rounded-lg border border-border">
-            <span>Device: <span className="text-text-primary font-semibold">{summary.device_info.manufacturer} {summary.device_info.model}</span></span>
-            <span className="text-border">|</span>
-            <span>OS: <span className="text-text-primary font-semibold">Android {summary.device_info.android_version}</span></span>
-            <span className="text-border">|</span>
-            <span>Patch: <span className="text-text-primary font-mono">{summary.device_info.security_patch}</span></span>
+
+          {/* Device and Android OS */}
+          <div className="flex flex-col px-3 py-1 bg-panel-alt rounded border border-border max-w-[200px] truncate">
+            <span className="text-[8px] text-text-secondary font-bold uppercase tracking-wider">Device</span>
+            <span className="text-text-primary font-semibold text-[10px] mt-0.5 truncate">
+              {summary.device_info.manufacturer} {summary.device_info.model} (Android {summary.device_info.android_version})
+            </span>
           </div>
-          <div className="px-3 py-1.5 bg-panel-alt rounded-lg border border-border text-accent flex items-center gap-1.5">
-            <span className="text-text-secondary">Range:</span>
-            <span className="font-bold">{getTimeRangeLabel(timeRange)}</span>
+
+          {/* Acquisition status pill */}
+          <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] border font-bold uppercase tracking-wide ${status.style}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${
+              status.text === 'Timeline Built' ? 'bg-emerald-500 animate-pulse' :
+              status.text === 'Partial Acquisition' ? 'bg-amber-500' : 'bg-red-500'
+            }`} />
+            <span>{status.text}</span>
+          </div>
+
+          {/* Time Window Selector Dropdown */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-panel-alt rounded border border-border text-text-primary text-[10px] font-bold">
+            <Calendar className="w-3.5 h-3.5 text-text-secondary" />
+            <select 
+              value={timeRange} 
+              onChange={(e) => onTimeRangeChange(e.target.value)} 
+              className="bg-transparent border-none focus:outline-none pr-1 cursor-pointer font-bold"
+            >
+              <option value="24h" className="bg-panel text-text-primary">Last 24 Hours</option>
+              <option value="7d" className="bg-panel text-text-primary">Last 7 Days</option>
+              <option value="custom" className="bg-panel text-text-primary">Custom Range</option>
+            </select>
           </div>
         </div>
       )}
 
-      {/* Action buttons */}
+      {/* Right-side action buttons */}
       <div className="flex items-center gap-2">
-        {summary && (
-          <div className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold uppercase tracking-wide ${
-            summary.acquisition_status === 'Complete' ? 'bg-success/15 text-success border border-success/20' :
-            summary.acquisition_status === 'Partial' ? 'bg-warning/15 text-warning border border-warning/20' :
-            'bg-danger/15 text-danger border border-danger/20'
-          } border`}>
-            {summary.acquisition_status}
-          </div>
-        )}
-        {warningsCount > 0 && (
-          <div 
-            onClick={onShowWarnings}
-            className="px-2.5 py-1 bg-warning/10 border border-warning/35 text-warning hover:bg-warning/20 rounded-md text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-all hover:scale-105 active:scale-95"
-          >
-            <AlertTriangle className="w-3.5 h-3.5" />
-            <span>{warningsCount} Warnings</span>
-          </div>
-        )}
-        <button 
-          onClick={handleVerify} 
-          className="p-2 bg-panel-alt border border-border hover:border-text-secondary rounded-lg text-text-secondary hover:text-text-primary transition-all duration-150" 
-          title="Verify Case Hashes"
-        >
-          <ShieldCheck className="w-4 h-4" />
-        </button>
         <button 
           onClick={handleExport} 
-          className="flex items-center gap-1.5 px-3 py-2 bg-accent hover:bg-accent-hover text-white font-bold rounded-lg transition-all duration-150 shadow-md"
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-accent hover:bg-accent-hover text-white font-bold rounded shadow-md transition-all duration-150"
         >
           <Download className="w-3.5 h-3.5" />
           <span>Export Report</span>
         </button>
+
+        <button 
+          onClick={() => alert('Accessing local exhibit case directory: ' + (summary?.case_id || 'EXH-001'))}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-panel-alt hover:bg-panel-alt/80 border border-border text-text-primary font-bold rounded transition-all duration-150"
+        >
+          <Folder className="w-3.5 h-3.5 text-accent" />
+          <span>Case Folder</span>
+        </button>
+
+        <button 
+          onClick={() => alert('Forensic triage actions menu.')}
+          className="p-1.5 bg-panel-alt hover:bg-panel-alt/80 border border-border text-text-secondary hover:text-text-primary rounded transition-all duration-150"
+        >
+          <MoreVertical className="w-3.5 h-3.5" />
+        </button>
       </div>
+
     </div>
   );
 }

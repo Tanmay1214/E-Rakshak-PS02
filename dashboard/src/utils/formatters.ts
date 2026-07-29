@@ -33,16 +33,12 @@ export function formatEventDate(timestamp: string | number | undefined | null, t
 
 export function formatEventTime(timestamp: string | number | undefined | null, timestampSort: string | number | undefined | null): string {
   const dateObj = parseTimestampToDate(timestamp) || parseTimestampToDate(timestampSort);
-  if (!dateObj) return 'Unknown time';
+  if (!dateObj) return '00:00:00';
 
-  let hours = dateObj.getHours();
+  const hours = String(dateObj.getHours()).padStart(2, '0');
   const minutes = String(dateObj.getMinutes()).padStart(2, '0');
   const seconds = String(dateObj.getSeconds()).padStart(2, '0');
-  const ampm = hours >= 12 ? 'PM' : 'AM';
-  hours = hours % 12;
-  hours = hours ? hours : 12;
-  const hoursStr = String(hours).padStart(2, '0');
-  return `${hoursStr}:${minutes}:${seconds} ${ampm}`;
+  return `${hours}:${minutes}:${seconds}`;
 }
 
 export function formatTimestamp(ts: string | number | undefined | null): string {

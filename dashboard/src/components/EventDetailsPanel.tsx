@@ -1,17 +1,24 @@
 import { useEffect, useState } from 'react';
 import type { TimelineEvent } from '../types/evidence';
-import { X, AlertTriangle, Copy, Check, MapPin, ImageIcon, FileText } from 'lucide-react';
+import { X, AlertTriangle, Copy, Check } from 'lucide-react';
 import { getIconForSource } from '../utils/icons';
-import { formatTimestamp } from '../utils/formatters';
+import { formatTimestamp, formatEventTime } from '../utils/formatters';
 import { fetchTimelineEvent } from '../services/api';
 import LoadingSpinner from './LoadingSpinner';
 
 interface EventDetailsPanelProps {
   eventId?: string;
   onClose?: () => void;
+  filteredEvents?: TimelineEvent[];
+  onSelectEvent?: (event: TimelineEvent) => void;
 }
 
-export default function EventDetailsPanel({ eventId, onClose }: EventDetailsPanelProps) {
+export default function EventDetailsPanel({
+  eventId,
+  onClose,
+  filteredEvents = [],
+  onSelectEvent
+}: EventDetailsPanelProps) {
   const [event, setEvent] = useState<TimelineEvent | null>(null);
   const [loading, setLoading] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -49,13 +56,19 @@ export default function EventDetailsPanel({ eventId, onClose }: EventDetailsPane
     return str;
   };
 
+  // Get index and build timeline context list
+  const selectedIndex = eventId && filteredEvents ? filteredEvents.findIndex(e => e.id === eventId) : -1;
+  const contextEvents = selectedIndex !== -1
+    ? filteredEvents.slice(Math.max(0, selectedIndex - 2), Math.min(filteredEvents.length, selectedIndex + 3))
+    : [];
+
   if (!eventId) {
     return (
-      <div className="w-full md:w-96 bg-panel border border-border rounded-xl h-full flex flex-col items-center justify-center p-6 text-center text-text-secondary select-none">
+      <div className="w-full h-full bg-panel border border-border rounded-xl flex flex-col items-center justify-center p-6 text-center text-text-secondary select-none">
         <AlertTriangle className="w-8 h-8 text-text-secondary/40 mb-3" />
-        <p className="text-sm font-medium">No Event Selected</p>
+        <p className="text-sm font-semibold">No Event Selected</p>
         <p className="text-xs text-text-secondary/60 mt-1 max-w-[200px]">
-          Select a timeline event to view detailed forensic metadata and parameters.
+          Select an event in the timeline to preview complete forensic detail analysis and nearby chronological context.
         </p>
       </div>
     );
@@ -63,7 +76,7 @@ export default function EventDetailsPanel({ eventId, onClose }: EventDetailsPane
 
   if (loading) {
     return (
-      <div className="w-full md:w-96 bg-panel border border-border rounded-xl h-full flex items-center justify-center p-6">
+      <div className="w-full h-full bg-panel border border-border rounded-xl flex items-center justify-center p-6">
         <LoadingSpinner />
       </div>
     );
@@ -71,7 +84,7 @@ export default function EventDetailsPanel({ eventId, onClose }: EventDetailsPane
 
   if (!event) {
     return (
-      <div className="w-full md:w-96 bg-panel border border-border rounded-xl h-full flex items-center justify-center p-6 text-danger text-center">
+      <div className="w-full h-full bg-panel border border-border rounded-xl flex items-center justify-center p-6 text-danger text-center">
         <p className="text-sm font-semibold">Failed to load event details.</p>
       </div>
     );
@@ -79,182 +92,223 @@ export default function EventDetailsPanel({ eventId, onClose }: EventDetailsPane
 
   const { icon: Icon, color, bg, border } = getIconForSource(event.source_app, event.event_type);
 
+  // Shorten hash for display
+  const getDisplayHash = (hash: string | undefined) => {
+    if (!hash) return 'None';
+    const clean = hash.trim();
+    if (clean.length > 12) {
+      return `${clean.substring(0, 8)}...${clean.substring(clean.length - 6)}`;
+    }
+    return clean;
+  };
+
   return (
-    <div className="w-full md:w-96 bg-panel border border-border rounded-xl h-full flex flex-col overflow-hidden shadow-xl animate-in slide-in-from-right duration-200">
-      {/* Panel Header */}
+    <div className="w-full h-full bg-panel border border-border rounded-xl flex flex-col overflow-hidden shadow-xl animate-in slide-in-from-right duration-250 select-none">
+      
+      {/* Event Details Panel Header */}
       <div className="flex items-center justify-between p-4 border-b border-border bg-panel-alt">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className={`p-2 rounded-lg flex-shrink-0 ${bg} border ${border}`}>
-            <Icon className={`w-5 h-5 ${color}`} />
+        <div className="flex items-center gap-3">
+          <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${bg} border ${border}`}>
+            <Icon className={`w-4.5 h-4.5 ${color}`} />
           </div>
-          <div className="min-w-0">
-            <h2 className="text-sm font-bold text-text-primary truncate">Event Details</h2>
-            <p className="text-[10px] text-text-secondary uppercase tracking-wider font-semibold font-mono">{event.event_type}</p>
+          <div>
+            <h2 className="text-xs font-black tracking-wider uppercase text-text-primary">Event Details</h2>
+            <p className="text-[10px] text-text-secondary font-bold font-mono uppercase mt-0.5">{event.source_app || 'System'}</p>
           </div>
         </div>
         {onClose && (
           <button 
             onClick={onClose} 
-            className="p-1 hover:bg-panel-alt rounded-md text-text-secondary hover:text-text-primary transition-colors"
+            className="p-1 hover:bg-panel rounded text-text-secondary hover:text-text-primary transition-colors"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4" />
           </button>
         )}
       </div>
 
-      {/* Content Scroller */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-5">
-        {/* Core Description Box */}
-        <section>
-          <div className="p-4 bg-panel-alt rounded-xl border border-border text-sm text-text-primary leading-relaxed whitespace-pre-wrap break-words max-h-48 overflow-y-auto font-sans shadow-inner">
+      {/* Main Panel Content Scroller */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        
+        {/* Title and summary header box */}
+        <div className={`p-3 bg-panel-alt rounded-lg border flex flex-col gap-1.5 ${
+          event.deleted ? 'border-red-500/30' : 'border-border'
+        }`}>
+          <span className={`text-[11px] font-extrabold ${event.deleted ? 'text-red-500' : 'text-accent'}`}>
+            {event.title}
+          </span>
+          <p className="text-xs text-text-primary leading-relaxed whitespace-pre-wrap break-words font-medium">
             {redactValue(event.summary)}
-          </div>
-        </section>
+          </p>
+        </div>
 
-        {/* Date & Time parameters */}
-        <section className="grid grid-cols-2 gap-3 text-xs">
-          <div className="p-3 bg-panel-alt rounded-lg border border-border">
-            <p className="text-[10px] font-bold text-text-secondary uppercase mb-1">Date</p>
-            <p className="font-semibold text-text-primary">{formatTimestamp(event.timestamp).split(' ')[0]}</p>
+        {/* Dense field mapping list */}
+        <div className="space-y-1.5 text-[11px] font-mono">
+          
+          <div className="flex justify-between items-baseline border-b border-border/40 py-1">
+            <span className="text-text-secondary">Event Type:</span>
+            <span className="text-text-primary font-bold text-right">{event.event_type}</span>
           </div>
-          <div className="p-3 bg-panel-alt rounded-lg border border-border">
-            <p className="text-[10px] font-bold text-text-secondary uppercase mb-1">Time</p>
-            <p className="font-semibold text-text-primary font-mono">{formatTimestamp(event.timestamp).split(' ').slice(1).join(' ')}</p>
-          </div>
-        </section>
 
-        {/* Identity & Actors */}
-        {(event.sender || event.receiver || event.phone_number || event.email) && (
-          <section className="space-y-2.5">
-            <h3 className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Communication Participants</h3>
-            <div className="bg-panel-alt rounded-xl border border-border p-3 space-y-2 text-xs">
-              {event.sender && (
-                <div className="flex justify-between py-1 border-b border-border/40 last:border-0">
-                  <span className="text-text-secondary">Sender:</span>
-                  <span className="text-text-primary font-semibold truncate max-w-[180px]" title={event.sender}>{redactValue(event.sender)}</span>
-                </div>
-              )}
-              {event.receiver && (
-                <div className="flex justify-between py-1 border-b border-border/40 last:border-0">
-                  <span className="text-text-secondary">Receiver:</span>
-                  <span className="text-text-primary font-semibold truncate max-w-[180px]" title={event.receiver}>{redactValue(event.receiver)}</span>
-                </div>
-              )}
-              {event.phone_number && (
-                <div className="flex justify-between py-1 border-b border-border/40 last:border-0">
-                  <span className="text-text-secondary">Phone:</span>
-                  <span className="text-text-primary font-mono font-semibold truncate max-w-[180px]" title={event.phone_number}>{event.phone_number}</span>
-                </div>
-              )}
-              {event.email && (
-                <div className="flex justify-between py-1 border-b border-border/40 last:border-0">
-                  <span className="text-text-secondary">Email:</span>
-                  <span className="text-text-primary font-mono font-semibold truncate max-w-[180px]" title={event.email}>{event.email}</span>
-                </div>
-              )}
+          <div className="flex justify-between items-baseline border-b border-border/40 py-1">
+            <span className="text-text-secondary">Timestamp:</span>
+            <span className="text-text-primary font-bold text-right">{formatTimestamp(event.timestamp)}</span>
+          </div>
+
+          <div className="flex justify-between items-baseline border-b border-border/40 py-1">
+            <span className="text-text-secondary">Source App:</span>
+            <span className="text-text-primary font-bold text-right">{event.source_app || 'None'}</span>
+          </div>
+
+          <div className="flex justify-between items-baseline border-b border-border/40 py-1">
+            <span className="text-text-secondary">Source Type:</span>
+            <span className="text-text-primary font-bold text-right">{event.source_type || 'None'}</span>
+          </div>
+
+          <div className="flex justify-between items-baseline border-b border-border/40 py-1">
+            <span className="text-text-secondary">Direction:</span>
+            <span className="text-text-primary font-bold capitalize text-right">{event.direction || 'n/a'}</span>
+          </div>
+
+          {event.sender && (
+            <div className="flex justify-between items-baseline border-b border-border/40 py-1">
+              <span className="text-text-secondary">From:</span>
+              <span className="text-text-primary font-bold text-right truncate max-w-[180px]" title={event.sender}>{redactValue(event.sender)}</span>
             </div>
-          </section>
-        )}
+          )}
 
-        {/* Location Mini Card */}
-        {(event.location_lat || event.location_lon) && (
-          <section className="space-y-2">
-            <h3 className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Geographic Location</h3>
-            <div className="bg-panel-alt rounded-xl border border-border p-3 text-xs flex items-start gap-3">
-              <MapPin className="w-5 h-5 text-amber-400 mt-0.5" />
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-text-primary">Latitude: {event.location_lat}</p>
-                <p className="font-semibold text-text-primary">Longitude: {event.location_lon}</p>
-                {event.location_accuracy !== undefined && (
-                  <p className="text-xs text-text-secondary mt-1">Accuracy: {event.location_accuracy}m</p>
-                )}
-                {event.source_type && (
-                  <p className="text-[10px] text-text-secondary font-mono mt-1 uppercase">Source: {event.source_type}</p>
-                )}
+          {event.receiver && (
+            <div className="flex justify-between items-baseline border-b border-border/40 py-1">
+              <span className="text-text-secondary">To:</span>
+              <span className="text-text-primary font-bold text-right truncate max-w-[180px]" title={event.receiver}>{redactValue(event.receiver)}</span>
+            </div>
+          )}
+
+          <div className="flex justify-between items-baseline border-b border-border/40 py-1">
+            <span className="text-text-secondary">Deleted Status:</span>
+            <span className={`px-1.5 py-0.5 rounded font-extrabold uppercase text-[9px] ${
+              event.deleted 
+                ? 'bg-red-500/15 text-red-500 border border-red-500/25' 
+                : 'text-text-secondary/70'
+            }`}>
+              {event.deleted ? 'Deleted Marker' : 'Not Deleted'}
+            </span>
+          </div>
+
+          <div className="flex justify-between items-baseline border-b border-border/40 py-1">
+            <span className="text-text-secondary">Recovered Status:</span>
+            <span className={`px-1.5 py-0.5 rounded font-extrabold uppercase text-[9px] ${
+              event.recovered 
+                ? 'bg-emerald-500/15 text-emerald-500 border border-emerald-500/25 animate-pulse' 
+                : 'text-text-secondary/70'
+            }`}>
+              {event.recovered ? 'Recovered' : 'Not Recovered'}
+            </span>
+          </div>
+
+          {event.parser && (
+            <div className="flex justify-between items-baseline border-b border-border/40 py-1">
+              <span className="text-text-secondary">Parser:</span>
+              <span className="text-text-primary font-bold text-right">{event.parser}</span>
+            </div>
+          )}
+
+          {event.source_file && (
+            <div className="flex flex-col gap-0.5 border-b border-border/40 py-1">
+              <span className="text-text-secondary">Source File:</span>
+              <span className="text-text-primary font-bold break-all leading-tight text-right select-all">{event.source_file}</span>
+            </div>
+          )}
+
+          {event.source_hash && (
+            <div className="flex flex-col gap-0.5 border-b border-border/40 py-1">
+              <span className="text-text-secondary">Hash:</span>
+              <div className="flex gap-2 items-center justify-between mt-0.5">
+                <span className="text-text-primary font-bold break-all select-all flex-1 text-left">{getDisplayHash(event.source_hash)}</span>
+                <button 
+                  onClick={() => copyToClipboard(event.source_hash || '', 'hash')} 
+                  className="p-1 bg-panel-alt border border-border rounded hover:bg-border text-text-secondary hover:text-text-primary"
+                  title="Copy full hash"
+                >
+                  {copiedField === 'hash' ? <Check className="w-3 h-3 text-success" /> : <Copy className="w-3 h-3" />}
+                </button>
               </div>
             </div>
-          </section>
-        )}
+          )}
 
-        {/* File and Media paths */}
-        {(event.media_path || event.file_path) && (
-          <section className="space-y-2">
-            <h3 className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">File System Assets</h3>
-            <div className="bg-panel-alt rounded-xl border border-border p-3 space-y-2.5 text-xs">
-              {event.media_path && (
-                <div className="flex flex-col gap-1">
-                  <span className="text-text-secondary flex items-center gap-1"><ImageIcon className="w-3.5 h-3.5" /> Media Path:</span>
-                  <div className="flex gap-2 items-center">
-                    <span className="text-text-primary font-mono bg-bg px-2 py-1 rounded border border-border flex-1 truncate select-all">{event.media_path}</span>
-                    <button 
-                      onClick={() => copyToClipboard(event.media_path || '', 'media')} 
-                      className="p-1.5 bg-bg border border-border rounded-md hover:bg-border text-text-secondary hover:text-text-primary"
-                    >
-                      {copiedField === 'media' ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-                </div>
-              )}
-              {event.file_path && (
-                <div className="flex flex-col gap-1">
-                  <span className="text-text-secondary flex items-center gap-1"><FileText className="w-3.5 h-3.5" /> File Path:</span>
-                  <div className="flex gap-2 items-center">
-                    <span className="text-text-primary font-mono bg-bg px-2 py-1 rounded border border-border flex-1 truncate select-all">{event.file_path}</span>
-                    <button 
-                      onClick={() => copyToClipboard(event.file_path || '', 'file')} 
-                      className="p-1.5 bg-bg border border-border rounded-md hover:bg-border text-text-secondary hover:text-text-primary"
-                    >
-                      {copiedField === 'file' ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-                </div>
-              )}
+          {event.confidence && (
+            <div className="flex justify-between items-center border-b border-border/40 py-1">
+              <span className="text-text-secondary">Confidence:</span>
+              <span className={`px-1.5 py-0.5 rounded border text-[9px] font-extrabold uppercase ${
+                event.confidence.toLowerCase() === 'high' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
+                event.confidence.toLowerCase() === 'medium' ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' :
+                'bg-red-500/10 border-red-500/30 text-red-400'
+              }`}>
+                {event.confidence}
+              </span>
             </div>
-          </section>
-        )}
+          )}
+        </div>
 
-        {/* Forensic Metadata parameters */}
-        <section className="space-y-2">
-          <h3 className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Forensic Metadata</h3>
-          <div className="bg-panel-alt rounded-xl border border-border p-3 space-y-2.5 text-xs font-mono">
-            <div>
-              <span className="text-text-secondary block mb-0.5">Event ID:</span>
-              <span className="text-text-primary break-all">{event.id}</span>
-            </div>
-            {event.parser && (
-              <div className="flex justify-between border-t border-border/40 pt-2">
-                <span className="text-text-secondary">Parser:</span>
-                <span className="text-text-primary font-semibold">{event.parser}</span>
-              </div>
-            )}
-            {event.source_file && (
-              <div className="border-t border-border/40 pt-2">
-                <span className="text-text-secondary block mb-0.5">Source DB File:</span>
-                <span className="text-text-primary break-all select-all">{event.source_file}</span>
-              </div>
-            )}
-            {event.source_hash && (
-              <div className="border-t border-border/40 pt-2">
-                <span className="text-text-secondary block mb-0.5">Source Hash:</span>
-                <div className="flex gap-2 items-center mt-1">
-                  <span className="text-text-primary break-all select-all flex-1">{event.source_hash}</span>
-                  <button 
-                    onClick={() => copyToClipboard(event.source_hash || '', 'hash')} 
-                    className="p-1 bg-bg border border-border rounded hover:bg-border text-text-secondary hover:text-text-primary"
+        {/* TIMELINE CONTEXT Section */}
+        {contextEvents.length > 0 && (
+          <div className="pt-3 border-t border-border/60 space-y-2">
+            <h3 className="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Timeline Context</h3>
+            
+            <div className="space-y-1.5">
+              {contextEvents.map(evt => {
+                const isCurrent = evt.id === event.id;
+                const isEvtDeleted = !!evt.deleted;
+                const timeStr = formatEventTime(evt.timestamp, evt.timestamp_sort);
+                
+                // Color dots for tiny timeline
+                const dotColorClass = isEvtDeleted 
+                  ? 'bg-red-500' 
+                  : evt.source_app.toLowerCase().includes('whatsapp') ? 'bg-emerald-500' :
+                    evt.source_app.toLowerCase().includes('telegram') ? 'bg-cyan-500' :
+                    evt.source_app.toLowerCase().includes('signal') ? 'bg-indigo-500' :
+                    evt.source_app.toLowerCase().includes('sms') ? 'bg-violet-500' :
+                    evt.source_app.toLowerCase().includes('phone') ? 'bg-blue-500' :
+                    evt.source_app.toLowerCase().includes('chrome') ? 'bg-cyan-400' :
+                    'bg-slate-500';
+
+                return (
+                  <div
+                    key={evt.id}
+                    onClick={() => onSelectEvent?.(evt)}
+                    className={`flex items-center gap-2.5 p-2 rounded cursor-pointer transition-all ${
+                      isCurrent 
+                        ? isEvtDeleted 
+                          ? 'bg-red-500/10 border border-red-500/40' 
+                          : 'bg-accent/10 border border-accent/40'
+                        : 'bg-panel-alt hover:bg-panel-alt/60 border border-transparent'
+                    }`}
                   >
-                    {copiedField === 'hash' ? <Check className="w-3 h-3 text-success" /> : <Copy className="w-3 h-3" />}
-                  </button>
-                </div>
-              </div>
-            )}
+                    {/* Timestamp */}
+                    <span className="text-[9.5px] text-text-secondary font-mono flex-shrink-0">{timeStr}</span>
+                    
+                    {/* Tiny connector dot */}
+                    <span className={`w-2 h-2 rounded-full ${dotColorClass}`} />
+                    
+                    {/* Event short text */}
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-[10.5px] font-bold truncate ${
+                        isCurrent 
+                          ? isEvtDeleted ? 'text-red-400' : 'text-accent'
+                          : 'text-text-primary'
+                      }`}>
+                        {evt.title}
+                      </p>
+                      {isCurrent && (
+                        <p className="text-[9.5px] text-text-secondary truncate mt-0.5 leading-tight">{evt.summary}</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </section>
-      </div>
+        )}
 
-      {/* Forensic Warnings Footer */}
-      <div className="p-3 bg-warning/10 border-t border-border flex items-center justify-center gap-2 text-warning text-[10px] font-bold tracking-wider uppercase">
-        <AlertTriangle className="w-4 h-4 text-warning" />
-        <span>Forensic Preview Only — Not a Full Examination</span>
       </div>
     </div>
   );

@@ -4,12 +4,12 @@ import { useTimeline } from '../hooks/useTimeline';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
 import FiltersBar from '../components/FiltersBar';
-import StatCards from '../components/StatCards';
 import Timeline from '../components/Timeline';
 import EventDetailsPanel from '../components/EventDetailsPanel';
 import CategoryView from '../components/CategoryView';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
+import BottomSummaryStrip from '../components/BottomSummaryStrip';
 import { useMessages } from '../hooks/useMessages';
 import { useCalls } from '../hooks/useCalls';
 import { useContacts } from '../hooks/useContacts';
@@ -53,11 +53,15 @@ export default function CaseDashboard() {
   const [intakeComplete, setIntakeComplete] = useState<boolean | null>(null);
 
   // Filter States
-  const [timeRange, setTimeRange] = useState('all');
-  const [customFromDate, setCustomFromDate] = useState('');
-  const [customToDate, setCustomToDate] = useState('');
+  const [timeRange, setTimeRange] = useState('7d');
+  const [customFromDate, setCustomFromDate] = useState('2026-07-17T00:00');
+  const [customToDate, setCustomToDate] = useState('2026-07-24T23:59');
   const [searchTerm, setSearchTerm] = useState('');
   const [showWarningsModal, setShowWarningsModal] = useState(false);
+  const [selectedSources, setSelectedSources] = useState<string[]>([
+    'whatsapp', 'telegram', 'signal', 'sms', 'phone', 'chrome', 'system'
+  ]);
+  const [bucketMode, setBucketMode] = useState<'15m' | '1h' | 'exact'>('exact');
 
   useEffect(() => {
     fetchIntakeStatus()
@@ -127,16 +131,34 @@ export default function CaseDashboard() {
     setSelectedEventId(event.id);
   };
 
-  const handleClearFilters = () => {
-    setActiveFilter('all');
-    setTimeRange('all');
-    setCustomFromDate('');
-    setCustomToDate('');
-    setSearchTerm('');
-  };
+  // const handleClearFilters = () => {
+  //   setActiveFilter('all');
+  //   setTimeRange('7d');
+  //   setCustomFromDate('2026-07-17T00:00');
+  //   setCustomToDate('2026-07-24T23:59');
+  //   setSearchTerm('');
+  //   setSelectedSources(['whatsapp', 'telegram', 'signal', 'sms', 'phone', 'chrome', 'system']);
+  //   setBucketMode('exact');
+  // };
 
-  // Client-side local search overlay to satisfy Criteria 11 search parameters
+  // Client-side local filters to check checkboxes state and search query
   const filteredEvents = events.filter(evt => {
+    // 1. Source checkbox filters
+    const app = (evt.source_app || '').toLowerCase();
+    const type = (evt.event_type || '').toLowerCase();
+    
+    let matchesCheckbox = false;
+    if (selectedSources.includes('whatsapp') && app.includes('whatsapp')) matchesCheckbox = true;
+    if (selectedSources.includes('telegram') && app.includes('telegram')) matchesCheckbox = true;
+    if (selectedSources.includes('signal') && app.includes('signal')) matchesCheckbox = true;
+    if (selectedSources.includes('sms') && (app.includes('sms') || type.includes('sms'))) matchesCheckbox = true;
+    if (selectedSources.includes('phone') && (app.includes('phone') || app.includes('call') || type.includes('call') || app === 'phone')) matchesCheckbox = true;
+    if (selectedSources.includes('chrome') && (app.includes('chrome') || app.includes('browser') || type.includes('browser'))) matchesCheckbox = true;
+    if (selectedSources.includes('system') && (app.includes('system') || app.includes('logcat') || type.includes('system') || type.includes('logcat'))) matchesCheckbox = true;
+    
+    if (!matchesCheckbox) return false;
+
+    // 2. Keyword search
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
       const fields = [
@@ -151,7 +173,7 @@ export default function CaseDashboard() {
         evt.file_path,
         evt.media_path
       ];
-      return fields.some(f => String(f || '').toLowerCase().includes(term));
+      if (!fields.some(f => String(f || '').toLowerCase().includes(term))) return false;
     }
     return true;
   });
@@ -167,24 +189,25 @@ export default function CaseDashboard() {
     
     if (activeView === 'timeline') {
       return (
-        <div className="flex flex-col h-full space-y-4 overflow-hidden">
-          {/* Header query filters */}
+        <div className="flex flex-col h-full space-y-3 overflow-hidden">
+          
+          {/* Header titles */}
+          <div className="flex-shrink-0 select-none">
+            <h2 className="text-sm font-black tracking-wider uppercase text-text-primary">RAW EVENT TIMELINE</h2>
+            <p className="text-text-secondary text-[11px] font-semibold mt-0.5">
+              Exact events normalized from Android, apps, browser, media, network, and system sources
+            </p>
+          </div>
+
+          {/* Header query filters & bucket controls */}
           <FiltersBar 
             activeFilter={activeFilter} 
             onFilterChange={setActiveFilter}
-            timeRange={timeRange}
-            onTimeRangeChange={setTimeRange}
-            customFromDate={customFromDate}
-            onCustomFromDateChange={setCustomFromDate}
-            customToDate={customToDate}
-            onCustomToDateChange={setCustomToDate}
             searchTerm={searchTerm}
             onSearchChange={setSearchTerm}
-            onClearFilters={handleClearFilters}
+            bucketMode={bucketMode}
+            onBucketModeChange={setBucketMode}
           />
-          
-          {/* Summary counters */}
-          <StatCards summary={summary} />
           
           {/* 3-Column Layout: Center Timeline List + Right Details Panel */}
           <div className="flex-1 flex gap-6 overflow-hidden min-h-0">
@@ -206,7 +229,12 @@ export default function CaseDashboard() {
             
             {/* Right Details Panel */}
             <div className="w-[360px] md:w-[380px] flex-shrink-0 flex flex-col h-full">
-              <EventDetailsPanel eventId={selectedEventId} onClose={() => setSelectedEventId(undefined)} />
+              <EventDetailsPanel 
+                eventId={selectedEventId} 
+                onClose={() => setSelectedEventId(undefined)} 
+                filteredEvents={filteredEvents}
+                onSelectEvent={handleSelectEvent}
+              />
             </div>
           </div>
         </div>
@@ -436,6 +464,12 @@ export default function CaseDashboard() {
         onViewChange={setActiveView} 
         timeRange={timeRange}
         onTimeRangeChange={setTimeRange}
+        customFromDate={customFromDate}
+        onCustomFromDateChange={setCustomFromDate}
+        customToDate={customToDate}
+        onCustomToDateChange={setCustomToDate}
+        selectedSources={selectedSources}
+        onSelectedSourcesChange={setSelectedSources}
       />
       
       <div className="flex-1 flex flex-col min-w-0">
@@ -443,21 +477,23 @@ export default function CaseDashboard() {
         <TopBar 
           summary={summary} 
           timeRange={timeRange} 
-          warningsCount={warningsCount}
-          onShowWarnings={() => setShowWarningsModal(true)}
+          onTimeRangeChange={setTimeRange}
         />
         
-        <main className="flex-1 overflow-hidden p-6 flex flex-col">
+        <main className="flex-1 overflow-hidden p-5 flex flex-col">
           <div className="flex-1 min-h-0 overflow-hidden">
             {renderContent()}
           </div>
           
           {/* Sticky Forensic Warning Page Footer */}
-          <div className="mt-4 p-2.5 bg-warning/5 border border-warning/20 rounded-lg flex items-center justify-center gap-2 text-warning text-[10px] font-bold tracking-wider uppercase shadow-sm flex-shrink-0">
+          <div className="mt-3 p-2 bg-warning/5 border border-warning/20 rounded flex items-center justify-center gap-2 text-warning text-[9px] font-extrabold tracking-wider uppercase shadow-sm flex-shrink-0">
             <AlertTriangle className="w-3.5 h-3.5 text-warning animate-pulse" />
             <span>Forensic Preview Only — Not a Full Examination</span>
           </div>
         </main>
+
+        {/* Bottom Summary Strip */}
+        <BottomSummaryStrip summary={summary} />
       </div>
 
       {/* Warnings & Missing Sources Modal Overlay */}
