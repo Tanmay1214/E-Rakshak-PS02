@@ -34,7 +34,7 @@ def _setup_case_folder(tmp_path, files_to_copy=None):
 
 # ─── 1. Index creation ────────────────────────────────────────────────
 def test_index_created(tmp_path):
-    from erakshak.dashboard.timeline_builder import build_evidence_index
+    from erakshak.dashboard.dashboard_indexer import build_evidence_index
     exhibit_root = _setup_case_folder(tmp_path, [
         ("device_identity.json", "derived/device_identity.json"),
     ])
@@ -46,7 +46,7 @@ def test_index_created(tmp_path):
 
 # ─── 2. Missing files don't crash ────────────────────────────────────
 def test_missing_files_no_crash(tmp_path):
-    from erakshak.dashboard.timeline_builder import build_evidence_index
+    from erakshak.dashboard.dashboard_indexer import build_evidence_index
     exhibit_root = _setup_case_folder(tmp_path)
     result = build_evidence_index(exhibit_root, "CASE001", "EX001")
     assert (exhibit_root / "derived" / "evidence_index.db").exists()
@@ -55,7 +55,7 @@ def test_missing_files_no_crash(tmp_path):
 
 # ─── 3. Device identity populates device_info ────────────────────────
 def test_device_identity_populates(tmp_path):
-    from erakshak.dashboard.timeline_builder import build_evidence_index
+    from erakshak.dashboard.dashboard_indexer import build_evidence_index
     exhibit_root = _setup_case_folder(tmp_path, [
         ("device_identity.json", "derived/device_identity.json"),
         ("software_summary.json", "derived/software_summary.json"),
@@ -73,7 +73,7 @@ def test_device_identity_populates(tmp_path):
 
 # ─── 4. Installed apps populate apps table ────────────────────────────
 def test_installed_apps_populate(tmp_path):
-    from erakshak.dashboard.timeline_builder import build_evidence_index
+    from erakshak.dashboard.dashboard_indexer import build_evidence_index
     exhibit_root = _setup_case_folder(tmp_path, [
         ("installed_apps.jsonl", "derived/installed_apps.jsonl"),
     ])
@@ -87,7 +87,7 @@ def test_installed_apps_populate(tmp_path):
 
 # ─── 5. SMS messages create timeline events ───────────────────────────
 def test_messages_create_timeline_events(tmp_path):
-    from erakshak.dashboard.timeline_builder import build_evidence_index
+    from erakshak.dashboard.dashboard_indexer import build_evidence_index
     exhibit_root = _setup_case_folder(tmp_path, [
         ("sms_messages.jsonl", "derived/sms_messages.jsonl"),
     ])
@@ -103,7 +103,7 @@ def test_messages_create_timeline_events(tmp_path):
 
 # ─── 6. Calls create timeline events ─────────────────────────────────
 def test_calls_create_timeline_events(tmp_path):
-    from erakshak.dashboard.timeline_builder import build_evidence_index
+    from erakshak.dashboard.dashboard_indexer import build_evidence_index
     exhibit_root = _setup_case_folder(tmp_path, [
         ("call_logs.jsonl", "derived/call_logs.jsonl"),
     ])
@@ -119,7 +119,7 @@ def test_calls_create_timeline_events(tmp_path):
 
 # ─── 7. Media creates timeline events ────────────────────────────────
 def test_media_creates_timeline_events(tmp_path):
-    from erakshak.dashboard.timeline_builder import build_evidence_index
+    from erakshak.dashboard.dashboard_indexer import build_evidence_index
     exhibit_root = _setup_case_folder(tmp_path, [
         ("media_index.jsonl", "derived/media_index.jsonl"),
     ])
@@ -135,7 +135,7 @@ def test_media_creates_timeline_events(tmp_path):
 
 # ─── 8. Audit events populate ────────────────────────────────────────
 def test_audit_populates(tmp_path):
-    from erakshak.dashboard.timeline_builder import build_evidence_index
+    from erakshak.dashboard.dashboard_indexer import build_evidence_index
     exhibit_root = _setup_case_folder(tmp_path, [
         ("audit.jsonl", "acquisition/audit.jsonl"),
     ])
@@ -149,7 +149,7 @@ def test_audit_populates(tmp_path):
 
 # ─── 9. Search finds messages ────────────────────────────────────────
 def test_search_finds_messages(tmp_path):
-    from erakshak.dashboard.timeline_builder import build_evidence_index
+    from erakshak.dashboard.dashboard_indexer import build_evidence_index
     from erakshak.dashboard.db import DashboardDB
     from erakshak.dashboard.search import search_evidence
 
@@ -165,7 +165,7 @@ def test_search_finds_messages(tmp_path):
 # ─── 10. API /api/case/summary returns valid data ────────────────────
 def test_api_case_summary(tmp_path):
     from erakshak.dashboard.api import create_dashboard_app
-    from erakshak.dashboard.timeline_builder import build_evidence_index
+    from erakshak.dashboard.dashboard_indexer import build_evidence_index
     from fastapi.testclient import TestClient
 
     exhibit_root = _setup_case_folder(tmp_path, [
@@ -186,7 +186,7 @@ def test_api_case_summary(tmp_path):
 # ─── 11. API timeline with category filter ───────────────────────────
 def test_api_timeline_filters(tmp_path):
     from erakshak.dashboard.api import create_dashboard_app
-    from erakshak.dashboard.timeline_builder import build_evidence_index
+    from erakshak.dashboard.dashboard_indexer import build_evidence_index
     from fastapi.testclient import TestClient
 
     exhibit_root = _setup_case_folder(tmp_path, [
@@ -209,7 +209,7 @@ def test_api_timeline_filters(tmp_path):
 # ─── 12. API timeline event detail ───────────────────────────────────
 def test_api_timeline_event_detail(tmp_path):
     from erakshak.dashboard.api import create_dashboard_app
-    from erakshak.dashboard.timeline_builder import build_evidence_index
+    from erakshak.dashboard.dashboard_indexer import build_evidence_index
     from fastapi.testclient import TestClient
 
     exhibit_root = _setup_case_folder(tmp_path, [
@@ -233,7 +233,7 @@ def test_api_timeline_event_detail(tmp_path):
 
 # ─── 13. Export report creates HTML file ──────────────────────────────
 def test_export_report_creates_html(tmp_path):
-    from erakshak.dashboard.timeline_builder import build_evidence_index
+    from erakshak.dashboard.dashboard_indexer import build_evidence_index
     from erakshak.dashboard.db import DashboardDB
     from erakshak.dashboard.report_export import export_html_report
 
@@ -253,7 +253,7 @@ def test_export_report_creates_html(tmp_path):
 
 # ─── 14. No raw encryption key in DB or report ───────────────────────
 def test_no_encryption_key_in_db(tmp_path):
-    from erakshak.dashboard.timeline_builder import build_evidence_index
+    from erakshak.dashboard.dashboard_indexer import build_evidence_index
     from erakshak.dashboard.db import DashboardDB
     from erakshak.dashboard.report_export import export_html_report
 
