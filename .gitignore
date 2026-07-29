@@ -22,6 +22,10 @@ msgstore.db.crypt*
 !backend/tests/**/*.txt
 !backend/tests/**/*.jsonl
 !**/requirements.txt
+!**/package.json
+!**/package-lock.json
+!**/tsconfig.json
+!**/tsconfig.node.json
 
 # Python virtual environments & build artifacts
 **/__pycache__/
