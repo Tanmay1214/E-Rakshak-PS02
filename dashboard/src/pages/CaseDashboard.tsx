@@ -447,8 +447,16 @@ export default function CaseDashboard() {
           onShowWarnings={() => setShowWarningsModal(true)}
         />
         
-        <main className="flex-1 overflow-hidden p-6">
-          {renderContent()}
+        <main className="flex-1 overflow-hidden p-6 flex flex-col">
+          <div className="flex-1 min-h-0 overflow-hidden">
+            {renderContent()}
+          </div>
+          
+          {/* Sticky Forensic Warning Page Footer */}
+          <div className="mt-4 p-2.5 bg-warning/5 border border-warning/20 rounded-lg flex items-center justify-center gap-2 text-warning text-[10px] font-bold tracking-wider uppercase shadow-sm flex-shrink-0">
+            <AlertTriangle className="w-3.5 h-3.5 text-warning animate-pulse" />
+            <span>Forensic Preview Only — Not a Full Examination</span>
+          </div>
         </main>
       </div>
 
