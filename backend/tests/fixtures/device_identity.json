@@ -1,0 +1,14 @@
+{
+  "manufacturer": "samsung",
+  "brand": "samsung",
+  "model": "SM-G991B",
+  "device": "o1s",
+  "product_name": "o1sxeea",
+  "board": "exynos2100",
+  "hardware": "exynos2100",
+  "device_name": "Galaxy S21",
+  "serial_prop": "R5CR1234567",
+  "adb_serial": "R5CR1234567",
+  "build_fingerprint": "samsung/o1sxeea/o1s:13/TP1A.220624.014/G991BXXS7DWKA:user/release-keys",
+  "cpu_abi": "arm64-v8a"
+}

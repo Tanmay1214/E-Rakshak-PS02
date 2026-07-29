@@ -1,0 +1,18 @@
+{
+  "case_id": "CASE001",
+  "exhibit_id": "EX001",
+  "selected_serial": "R5CR1234567",
+  "adb_version": "1.0.41",
+  "connected_devices": [{"serial": "R5CR1234567", "state": "device"}],
+  "device_state": "device",
+  "host_timestamp_utc": "2024-01-18T10:00:00Z",
+  "device_time_raw": "Thu Jan 18 15:30:00 IST 2024",
+  "device_model": "SM-G991B",
+  "android_version": "13",
+  "security_patch": "2024-01-01",
+  "battery_summary": {"level": 85, "status": "Not charging"},
+  "selinux_status": "Enforcing",
+  "root_available": false,
+  "warnings": [],
+  "result": "pass"
+}

@@ -1,0 +1,2 @@
+{"timestamp": "2024-01-18T09:55:00", "pid": "1234", "tid": "1234", "log_level": "I", "tag": "ActivityManager", "message": "Start proc com.whatsapp for activity", "category": "app_launch"}
+{"timestamp": "2024-01-18T09:56:00", "pid": "5678", "tid": "5678", "log_level": "E", "tag": "AndroidRuntime", "message": "FATAL EXCEPTION: main", "category": "crashes"}

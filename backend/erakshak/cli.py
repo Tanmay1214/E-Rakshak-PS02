@@ -1401,6 +1401,75 @@ def cmd_unified_pipeline(args: argparse.Namespace) -> None:
 # Argument parser
 # ═════════════════════════════════════════════════════════════════════
 
+
+def cmd_build_dashboard_index(args) -> None:
+    """Build the forensic dashboard evidence index."""
+    print_banner()
+    case_id = args.case
+    exhibit_id = args.exhibit
+    output_root = args.output
+    
+    exhibit_root = Path(output_root) / case_id / exhibit_id
+    if not exhibit_root.exists():
+        print(f"[ERROR] Case folder not found: {exhibit_root}")
+        sys.exit(1)
+    
+    print(f"Building dashboard evidence index...")
+    print(f"  Case:    {case_id}")
+    print(f"  Exhibit: {exhibit_id}")
+    print(f"  Folder:  {exhibit_root}")
+    print()
+    
+    from erakshak.dashboard.dashboard_indexer import build_evidence_index
+    result = build_evidence_index(exhibit_root, case_id, exhibit_id)
+    
+    print(f"\nEvidence index built successfully!")
+    print(f"  Database: {result['db_path']}")
+    print(f"  Total events: {result.get('total_events', 0)}")
+    print(f"  Messages:     {result.get('total_messages', 0)}")
+    print(f"  Calls:        {result.get('total_calls', 0)}")
+    print(f"  Contacts:     {result.get('total_contacts', 0)}")
+    print(f"  Media:        {result.get('total_media', 0)}")
+    print(f"  Apps:         {result.get('total_apps', 0)}")
+    print(f"  Accounts:     {result.get('total_accounts', 0)}")
+    print()
+
+def cmd_dashboard(args) -> None:
+    """Start the forensic dashboard server."""
+    print_banner()
+    case_id = args.case
+    exhibit_id = args.exhibit
+    output_root = args.output
+    host = args.host
+    port = args.port
+    
+    exhibit_root = Path(output_root) / case_id / exhibit_id
+    if not exhibit_root.exists():
+        print(f"[ERROR] Case folder not found: {exhibit_root}")
+        sys.exit(1)
+    
+    # Build/refresh index first
+    print(f"Building/refreshing evidence index...")
+    from erakshak.dashboard.dashboard_indexer import build_evidence_index
+    result = build_evidence_index(exhibit_root, case_id, exhibit_id)
+    print(f"  Evidence index ready ({result.get('total_events', 0)} events)")
+    print()
+    
+    # Start dashboard server
+    db_path = exhibit_root / "derived" / "evidence_index.db"
+    from erakshak.dashboard.api import create_dashboard_app
+    app = create_dashboard_app(db_path, exhibit_root, case_id, exhibit_id)
+    
+    print(f"Starting E-RAKSHAK Forensic Dashboard...")
+    print(f"  Dashboard: http://{host}:{port}")
+    print(f"  API:       http://{host}:{port}/api/case/summary")
+    print(f"  Case:      {case_id} / {exhibit_id}")
+    print(f"\nPress Ctrl+C to stop.\n")
+    
+    import uvicorn
+    uvicorn.run(app, host=host, port=port, log_level="warning")
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build and return the argument parser."""
     parser = argparse.ArgumentParser(
@@ -1672,6 +1741,22 @@ def build_parser() -> argparse.ArgumentParser:
     sp_un.add_argument("--source-type", help="Filter timeline by source type")
     
     sp_un.set_defaults(func=cmd_unified_pipeline)
+
+    # ── build-dashboard-index ─────────────────────────────────────
+    sp_idx = subparsers.add_parser("build-dashboard-index", help="Build forensic dashboard evidence index")
+    sp_idx.add_argument("--case", required=True, help="Case identifier (e.g. CASE001)")
+    sp_idx.add_argument("--exhibit", required=True, help="Exhibit identifier (e.g. EX001)")
+    sp_idx.add_argument("--output", default="cases", help="Output root directory (default: cases)")
+    sp_idx.set_defaults(func=cmd_build_dashboard_index)
+
+    # ── dashboard ─────────────────────────────────────────────────
+    sp_dash = subparsers.add_parser("dashboard", help="Start forensic preview dashboard")
+    sp_dash.add_argument("--case", required=True, help="Case identifier (e.g. CASE001)")
+    sp_dash.add_argument("--exhibit", required=True, help="Exhibit identifier (e.g. EX001)")
+    sp_dash.add_argument("--output", default="cases", help="Output root directory (default: cases)")
+    sp_dash.add_argument("--host", default="127.0.0.1", help="Dashboard host (default: 127.0.0.1)")
+    sp_dash.add_argument("--port", type=int, default=8765, help="Dashboard port (default: 8765)")
+    sp_dash.set_defaults(func=cmd_dashboard)
 
     return parser
 

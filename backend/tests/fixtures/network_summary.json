@@ -1,0 +1,13 @@
+{
+  "current_ip": "192.168.1.100",
+  "wifi_ssid": "HomeNetwork",
+  "saved_wifi_networks": ["HomeNetwork", "OfficeWiFi"],
+  "mac_address": "AA:BB:CC:DD:EE:FF",
+  "sim_info": {"carrier": "Airtel", "country": "IN"},
+  "mobile_operator": "Airtel",
+  "bluetooth_devices": ["JBL Speaker"],
+  "vpn_active": false,
+  "dns_servers": ["8.8.8.8", "8.8.4.4"],
+  "default_route": "192.168.1.1",
+  "interfaces": ["wlan0", "rmnet0"]
+}
