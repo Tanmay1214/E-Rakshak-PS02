@@ -1,15 +1,55 @@
-export function formatTimestamp(ts: string | number): string {
-  if (!ts) return '';
-  
-  if (typeof ts === 'string' && /^\d+$/.test(ts)) {
-    const num = parseInt(ts, 10);
-    // If less than 10 billion, it's highly likely in seconds (valid until year 2286). 
-    // Otherwise, assume milliseconds.
-    return new Date(num < 10000000000 ? num * 1000 : num).toLocaleString();
+function parseTimestampToDate(ts: string | number | undefined | null): Date | null {
+  if (ts === undefined || ts === null || ts === '') return null;
+
+  let numVal: number | null = null;
+  if (typeof ts === 'number') {
+    numVal = ts;
+  } else if (typeof ts === 'string') {
+    const trimmed = ts.trim();
+    if (/^\d+(\.\d+)?$/.test(trimmed)) {
+      numVal = parseFloat(trimmed);
+    }
   }
-  
+
+  if (numVal !== null && !isNaN(numVal)) {
+    const ms = numVal < 10000000000 ? numVal * 1000 : numVal;
+    return new Date(ms);
+  }
+
   const d = new Date(ts);
-  return isNaN(d.getTime()) ? String(ts) : d.toLocaleString();
+  return isNaN(d.getTime()) ? null : d;
+}
+
+export function formatEventDate(timestamp: string | number | undefined | null, timestampSort: string | number | undefined | null): string {
+  const dateObj = parseTimestampToDate(timestamp) || parseTimestampToDate(timestampSort);
+  if (!dateObj) return 'Unknown date';
+  
+  const day = dateObj.getDate();
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const month = months[dateObj.getMonth()];
+  const year = dateObj.getFullYear();
+  return `${day} ${month} ${year}`;
+}
+
+export function formatEventTime(timestamp: string | number | undefined | null, timestampSort: string | number | undefined | null): string {
+  const dateObj = parseTimestampToDate(timestamp) || parseTimestampToDate(timestampSort);
+  if (!dateObj) return 'Unknown time';
+
+  let hours = dateObj.getHours();
+  const minutes = String(dateObj.getMinutes()).padStart(2, '0');
+  const seconds = String(dateObj.getSeconds()).padStart(2, '0');
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12;
+  hours = hours ? hours : 12;
+  const hoursStr = String(hours).padStart(2, '0');
+  return `${hoursStr}:${minutes}:${seconds} ${ampm}`;
+}
+
+export function formatTimestamp(ts: string | number | undefined | null): string {
+  if (!ts) return '';
+  const dateObj = parseTimestampToDate(ts);
+  if (!dateObj) return String(ts);
+  return `${formatEventDate(ts, undefined)} ${formatEventTime(ts, undefined)}`;
 }
 
 export function formatDuration(seconds: number): string {

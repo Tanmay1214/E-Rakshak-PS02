@@ -3,6 +3,7 @@ from pathlib import Path
 from datetime import datetime
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+import json
 from pydantic import BaseModel
 from typing import Optional
 from .db import DashboardDB
@@ -72,12 +73,28 @@ def create_dashboard_app(db_path: Path, exhibit_root: Path, case_id: str, exhibi
             counts = db.get_counts()
             case_rec = case[0] if case else {}
             dev_rec = dev[0] if dev else {}
+            
+            # Read timeline_summary.json for warnings and other details
+            warnings_list = []
+            missing_sources = []
+            summary_file = exhibit_root / "derived" / "timeline_summary.json"
+            if summary_file.exists():
+                try:
+                    with open(summary_file, 'r', encoding='utf-8') as f:
+                        sum_data = json.load(f)
+                        warnings_list = sum_data.get("warnings", [])
+                        missing_sources = sum_data.get("missing_sources", [])
+                except Exception as e:
+                    logger.warning(f"Failed to read timeline_summary.json: {e}")
+            
             return {
                 "case_id": case_rec.get("case_id", case_id),
                 "exhibit_id": case_rec.get("exhibit_id", exhibit_id),
                 "case_info": case_rec,
                 "device_info": dev_rec,
                 "counts": counts,
+                "warnings": warnings_list,
+                "missing_sources": missing_sources
             }
 
     @app.get("/api/device")

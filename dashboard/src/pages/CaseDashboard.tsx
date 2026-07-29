@@ -7,9 +7,9 @@ import FiltersBar from '../components/FiltersBar';
 import StatCards from '../components/StatCards';
 import Timeline from '../components/Timeline';
 import EventDetailsPanel from '../components/EventDetailsPanel';
-import KeywordSearch from '../components/KeywordSearch';
 import CategoryView from '../components/CategoryView';
 import LoadingSpinner from '../components/LoadingSpinner';
+import EmptyState from '../components/EmptyState';
 import { useMessages } from '../hooks/useMessages';
 import { useCalls } from '../hooks/useCalls';
 import { useContacts } from '../hooks/useContacts';
@@ -23,8 +23,9 @@ import { useBrowserHistory } from '../hooks/useBrowserHistory';
 import { fetchIntakeStatus } from '../services/api';
 import CaseIntakeWizard from './CaseIntakeWizard';
 import CaseInfoPage from './CaseInfoPage';
-import type {  TimelineEvent  } from '../types/evidence';
+import type { TimelineEvent } from '../types/evidence';
 import { formatTimestamp, formatDuration, formatBytes, truncateText } from '../utils/formatters';
+import { AlertTriangle, AlertCircle, ShieldAlert, X } from 'lucide-react';
 
 const ExpandableText = ({ text, maxLength = 100 }: { text: string; maxLength?: number }) => {
   const [expanded, setExpanded] = useState(false);
@@ -51,6 +52,13 @@ export default function CaseDashboard() {
   const [selectedEventId, setSelectedEventId] = useState<string | undefined>();
   const [intakeComplete, setIntakeComplete] = useState<boolean | null>(null);
 
+  // Filter States
+  const [timeRange, setTimeRange] = useState('all');
+  const [customFromDate, setCustomFromDate] = useState('');
+  const [customToDate, setCustomToDate] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [showWarningsModal, setShowWarningsModal] = useState(false);
+
   useEffect(() => {
     fetchIntakeStatus()
       .then(res => setIntakeComplete(res.complete))
@@ -59,20 +67,47 @@ export default function CaseDashboard() {
         setIntakeComplete(false);
       });
   }, []);
-  
+
   const getTimelineFilters = () => {
-    if (activeFilter === 'all') return {};
-    if (['whatsapp', 'telegram', 'signal'].includes(activeFilter)) {
-      // API expects exact case for source_app (e.g., 'WhatsApp', 'Telegram', 'Signal')
-      const sourceMap: Record<string, string> = {
-        'whatsapp': 'WhatsApp',
-        'telegram': 'Telegram',
-        'signal': 'Signal'
-      };
-      return { source: sourceMap[activeFilter] };
+    const filters: any = { limit: 100 };
+    
+    // Category mapping
+    if (activeFilter !== 'all') {
+      if (['whatsapp', 'telegram', 'signal'].includes(activeFilter)) {
+        const sourceMap: Record<string, string> = {
+          'whatsapp': 'WhatsApp',
+          'telegram': 'Telegram',
+          'signal': 'Signal'
+        };
+        filters.source = sourceMap[activeFilter];
+      } else if (activeFilter === 'sms') {
+        filters.source = 'SMS';
+      } else if (activeFilter === 'browser') {
+        filters.category = 'browser';
+      } else if (activeFilter === 'location') {
+        filters.category = 'locations';
+      } else {
+        filters.category = activeFilter;
+      }
     }
-    if (activeFilter === 'location') return { category: 'locations' };
-    return { category: activeFilter };
+    
+    // Time Range / Date Picker filters
+    if (timeRange === '24h') {
+      const yesterday = new Date(Date.now() - 24 * 3600000);
+      filters.from_date = yesterday.toISOString().split('T')[0];
+    } else if (timeRange === '7d') {
+      const weekAgo = new Date(Date.now() - 7 * 24 * 3600000);
+      filters.from_date = weekAgo.toISOString().split('T')[0];
+    } else if (timeRange === 'custom') {
+      if (customFromDate) filters.from_date = customFromDate;
+      if (customToDate) filters.to_date = customToDate;
+    }
+
+    if (searchTerm) {
+      filters.q = searchTerm;
+    }
+    
+    return filters;
   };
   
   const { events, loading: eventsLoading, total: totalEvents, loadMore } = useTimeline(getTimelineFilters());
@@ -92,6 +127,39 @@ export default function CaseDashboard() {
     setSelectedEventId(event.id);
   };
 
+  const handleClearFilters = () => {
+    setActiveFilter('all');
+    setTimeRange('all');
+    setCustomFromDate('');
+    setCustomToDate('');
+    setSearchTerm('');
+  };
+
+  // Client-side local search overlay to satisfy Criteria 11 search parameters
+  const filteredEvents = events.filter(evt => {
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      const fields = [
+        evt.title,
+        evt.summary,
+        evt.sender,
+        evt.receiver,
+        evt.phone_number,
+        evt.email,
+        evt.source_app,
+        evt.source_type,
+        evt.file_path,
+        evt.media_path
+      ];
+      return fields.some(f => String(f || '').toLowerCase().includes(term));
+    }
+    return true;
+  });
+
+  const warningsList = summary?.warnings || [];
+  const missingSources = summary?.missing_sources || [];
+  const warningsCount = warningsList.length + missingSources.length;
+
   const renderContent = () => {
     if (activeView === 'case-info') {
       return <CaseInfoPage />;
@@ -99,29 +167,65 @@ export default function CaseDashboard() {
     
     if (activeView === 'timeline') {
       return (
-        <div className="flex flex-col h-full relative">
-          <div className="flex items-center justify-between mb-6">
-            <FiltersBar activeFilter={activeFilter} onFilterChange={setActiveFilter} />
-            <KeywordSearch onSearch={() => {}} />
-          </div>
+        <div className="flex flex-col h-full space-y-4 overflow-hidden">
+          {/* Header query filters */}
+          <FiltersBar 
+            activeFilter={activeFilter} 
+            onFilterChange={setActiveFilter}
+            timeRange={timeRange}
+            onTimeRangeChange={setTimeRange}
+            customFromDate={customFromDate}
+            onCustomFromDateChange={setCustomFromDate}
+            customToDate={customToDate}
+            onCustomToDateChange={setCustomToDate}
+            searchTerm={searchTerm}
+            onSearchChange={setSearchTerm}
+            onClearFilters={handleClearFilters}
+          />
           
+          {/* Summary counters */}
           <StatCards summary={summary} />
           
-          <div className="flex-1 overflow-auto bg-panel-alt rounded-lg border border-border p-4">
-            <Timeline 
-              events={events} 
-              loading={eventsLoading} 
-              onSelectEvent={handleSelectEvent}
-              selectedEventId={selectedEventId}
-              onLoadMore={loadMore}
-              hasMore={events.length < totalEvents}
-            />
+          {/* 3-Column Layout: Center Timeline List + Right Details Panel */}
+          <div className="flex-1 flex gap-6 overflow-hidden min-h-0">
+            {/* Center Timeline */}
+            <div className="flex-1 overflow-y-auto bg-panel-alt rounded-xl border border-border p-4 shadow-inner">
+              {filteredEvents.length === 0 && !eventsLoading ? (
+                <EmptyState message="No timeline events match this search." />
+              ) : (
+                <Timeline 
+                  events={filteredEvents} 
+                  loading={eventsLoading} 
+                  onSelectEvent={handleSelectEvent}
+                  selectedEventId={selectedEventId}
+                  onLoadMore={loadMore}
+                  hasMore={events.length < totalEvents}
+                />
+              )}
+            </div>
+            
+            {/* Right Details Panel */}
+            <div className="w-[360px] md:w-[380px] flex-shrink-0 flex flex-col h-full">
+              <EventDetailsPanel eventId={selectedEventId} onClose={() => setSelectedEventId(undefined)} />
+            </div>
           </div>
         </div>
       );
     }
     
     if (activeView === 'messages') {
+      if (messages.length === 0 && !messagesLoading) {
+        return (
+          <div className="flex-1 flex items-center justify-center border border-border rounded-xl bg-panel-alt h-full p-8 text-center">
+            <div className="max-w-sm space-y-2">
+              <AlertCircle className="w-8 h-8 text-warning mx-auto" />
+              <p className="text-sm font-semibold text-text-primary">No messages found or Signal artifacts unavailable or encrypted.</p>
+              <p className="text-xs text-text-secondary">If testing Signal, ensure database is decrypted and key is present.</p>
+            </div>
+          </div>
+        );
+      }
+
       const columns = [
         { key: 'timestamp', label: 'Time', render: (val: any) => formatTimestamp(val) },
         { key: 'app', label: 'App', render: (val: string) => <span className="capitalize text-accent">{val}</span> },
@@ -172,7 +276,7 @@ export default function CaseDashboard() {
         { key: 'version_name', label: 'Version' },
         { key: 'install_time', label: 'Installed', render: (val: any) => formatTimestamp(val) },
         { key: 'is_system_app', label: 'System App', render: (val: boolean) => (
-          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${val ? 'bg-accent/20 text-accent' : 'bg-success/20 text-success'}`}>
+          <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${val ? 'bg-accent/20 text-accent' : 'bg-success/20 text-success'}`}>
             {val ? 'Yes' : 'No'}
           </span>
         )},
@@ -198,7 +302,7 @@ export default function CaseDashboard() {
             : val === 'warning' ? 'bg-warning/20 text-warning' 
             : val === 'error' ? 'bg-danger/20 text-danger'
             : 'bg-success/20 text-success';
-          return <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${color}`}>{val}</span>;
+          return <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${color}`}>{val}</span>;
         }},
         { key: 'title', label: 'Title' },
         { key: 'summary', label: 'Summary', render: (val: string) => <span className="truncate max-w-xs block" title={val}>{truncateText(val, 60)}</span> },
@@ -207,6 +311,18 @@ export default function CaseDashboard() {
     }
     
     if (activeView === 'locations') {
+      if (locations.length === 0 && !locationsLoading) {
+        return (
+          <div className="flex-1 flex items-center justify-center border border-border rounded-xl bg-panel-alt h-full p-8 text-center">
+            <div className="max-w-sm space-y-2">
+              <AlertCircle className="w-8 h-8 text-warning mx-auto animate-pulse" />
+              <p className="text-sm font-semibold text-text-primary">Location evidence unavailable for this case.</p>
+              <p className="text-xs text-text-secondary">GPS, Wifi, and cell triangulation logs are missing or uncollected.</p>
+            </div>
+          </div>
+        );
+      }
+
       const columns = [
         { key: 'timestamp', label: 'Time', render: (val: any) => formatTimestamp(val) },
         { key: 'latitude', label: 'Latitude' },
@@ -230,6 +346,18 @@ export default function CaseDashboard() {
     }
     
     if (activeView === 'browser') {
+      if (history.length === 0 && searches.length === 0 && downloads.length === 0 && !browserLoading) {
+        return (
+          <div className="flex-1 flex items-center justify-center border border-border rounded-xl bg-panel-alt h-full p-8 text-center">
+            <div className="max-w-sm space-y-2">
+              <AlertCircle className="w-8 h-8 text-warning mx-auto" />
+              <p className="text-sm font-semibold text-text-primary">Browser history unavailable or not collected.</p>
+              <p className="text-xs text-text-secondary">No local searches, downloads or Chrome browsing history files were found.</p>
+            </div>
+          </div>
+        );
+      }
+
       const historyColumns = [
         { key: 'timestamp', label: 'Time', render: (val: any) => formatTimestamp(val) },
         { key: 'browser', label: 'Browser' },
@@ -251,7 +379,7 @@ export default function CaseDashboard() {
         { key: 'total_bytes', label: 'Size', render: (val: number) => formatBytes(val) },
       ];
       return (
-        <div className="space-y-6">
+        <div className="space-y-6 h-full overflow-y-auto pr-1">
           <CategoryView title="Browser History" columns={historyColumns} data={history} loading={browserLoading} total={totalHistory} />
           <CategoryView title="Browser Searches" columns={searchColumns} data={searches} loading={browserLoading} total={totalSearches} />
           <CategoryView title="Browser Downloads" columns={downloadColumns} data={downloads} loading={browserLoading} total={totalDownloads} />
@@ -280,9 +408,10 @@ export default function CaseDashboard() {
   if (summaryError || !summary) {
     return (
       <div className="flex h-screen items-center justify-center bg-bg">
-        <div className="text-center text-danger">
-          <p className="text-xl font-medium mb-2">Failed to load dashboard</p>
-          <p>{summaryError || "No case summary found. Did you build the index?"}</p>
+        <div className="text-center text-danger p-6 border border-danger/20 rounded-xl bg-panel max-w-md">
+          <ShieldAlert className="w-10 h-10 text-danger mx-auto mb-3" />
+          <p className="text-lg font-bold mb-2">Failed to load dashboard</p>
+          <p className="text-xs text-text-secondary">{summaryError || "No case summary found. Did you build the index?"}</p>
         </div>
       </div>
     );
@@ -299,24 +428,84 @@ export default function CaseDashboard() {
   }
 
   return (
-    <div className="flex h-screen bg-bg text-text-primary overflow-hidden font-sans">
-      <Sidebar summary={summary} activeView={activeView} onViewChange={setActiveView} />
+    <div className="flex h-screen bg-bg text-text-primary overflow-hidden font-sans select-text">
+      {/* Sidebar Navigation */}
+      <Sidebar 
+        summary={summary} 
+        activeView={activeView} 
+        onViewChange={setActiveView} 
+        timeRange={timeRange}
+        onTimeRangeChange={setTimeRange}
+      />
       
       <div className="flex-1 flex flex-col min-w-0">
-        <TopBar summary={summary} />
+        {/* Top Header */}
+        <TopBar 
+          summary={summary} 
+          timeRange={timeRange} 
+          warningsCount={warningsCount}
+          onShowWarnings={() => setShowWarningsModal(true)}
+        />
         
-        <main className="flex-1 overflow-hidden relative flex">
-          <div className="flex-1 p-6 overflow-y-auto">
-            {renderContent()}
-          </div>
-          
-          {selectedEventId && (
-            <div className="absolute inset-y-0 right-0 z-20">
-              <EventDetailsPanel eventId={selectedEventId} onClose={() => setSelectedEventId(undefined)} />
-            </div>
-          )}
+        <main className="flex-1 overflow-hidden p-6">
+          {renderContent()}
         </main>
       </div>
+
+      {/* Warnings & Missing Sources Modal Overlay */}
+      {showWarningsModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-panel border border-border rounded-xl max-w-lg w-full flex flex-col max-h-[80vh] shadow-2xl">
+            <div className="flex items-center justify-between p-4 border-b border-border bg-panel-alt">
+              <div className="flex items-center gap-2 text-warning">
+                <AlertTriangle className="w-5 h-5" />
+                <h3 className="font-bold text-text-primary">Pipeline Warnings & Missing Sources</h3>
+              </div>
+              <button 
+                onClick={() => setShowWarningsModal(false)}
+                className="p-1 hover:bg-panel-alt rounded-lg text-text-secondary hover:text-text-primary transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-4 overflow-y-auto space-y-4 text-xs">
+              {warningsList.length > 0 && (
+                <div className="space-y-1.5">
+                  <h4 className="font-bold text-warning uppercase text-[10px] tracking-wide">Warnings ({warningsList.length})</h4>
+                  <ul className="space-y-1 list-disc pl-4 text-text-secondary">
+                    {warningsList.map((w, idx) => (
+                      <li key={idx} className="leading-relaxed">{w}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {missingSources.length > 0 && (
+                <div className="space-y-1.5 pt-2 border-t border-border/50">
+                  <h4 className="font-bold text-text-primary uppercase text-[10px] tracking-wide">Missing Artifact Sources ({missingSources.length})</h4>
+                  <ul className="space-y-1 list-disc pl-4 text-text-secondary font-mono">
+                    {missingSources.map((ms, idx) => (
+                      <li key={idx} className="text-[10px]">{ms}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {warningsCount === 0 && (
+                <p className="text-center text-text-secondary py-8 font-medium">No warnings or missing sources detected in this triage pipeline.</p>
+              )}
+            </div>
+            
+            <div className="p-3 border-t border-border bg-panel-alt flex justify-end">
+              <button 
+                onClick={() => setShowWarningsModal(false)}
+                className="px-4 py-1.5 bg-accent hover:bg-accent-hover text-white text-xs font-semibold rounded-lg transition-colors"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

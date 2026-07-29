@@ -25,9 +25,14 @@ export interface CaseSummary {
     network: number;
     system: number;
     integrity: number;
+    browser_history?: number;
+    browser_searches?: number;
+    browser_downloads?: number;
   };
   acquisition_started_at: string;
   acquisition_completed_at: string;
+  warnings?: string[];
+  missing_sources?: string[];
 }
 
 export interface DeviceInfo {
@@ -43,13 +48,36 @@ export interface DeviceInfo {
 export interface TimelineEvent {
   id: string;
   timestamp: string;
-  event_type: string;
+  timestamp_sort?: string | number;
+  bucket_15m?: string;
+  bucket_1h?: string;
   source_app: string;
+  source_type?: string;
+  category?: string;
+  event_type: string;
+  direction?: string;
   title: string;
   summary: string;
-  deleted: boolean;
-  recovered: boolean;
-  confidence: 'high' | 'medium' | 'low';
+  sender?: string;
+  receiver?: string;
+  phone_number?: string;
+  email?: string;
+  location_lat?: number;
+  location_lon?: number;
+  location_accuracy?: number;
+  media_path?: string;
+  thumbnail_path?: string;
+  file_path?: string;
+  deleted_status?: string;
+  recovered_status?: string;
+  deleted?: boolean;
+  recovered?: boolean;
+  confidence?: 'high' | 'medium' | 'low';
+  source_file?: string;
+  source_hash?: string;
+  parser?: string;
+  raw_ref?: string;
+  raw_json?: string;
 }
 
 export interface TimelineResponse {
@@ -204,8 +232,13 @@ export interface TimelineFilters {
   page?: number;
   limit?: number;
   source?: string;
-  startDate?: string;
-  endDate?: string;
+  category?: string;
+  event_type?: string;
+  from_date?: string;
+  to_date?: string;
+  q?: string;
+  deleted?: boolean;
+  recovered?: boolean;
 }
 
 export interface ExaminerInfo {
