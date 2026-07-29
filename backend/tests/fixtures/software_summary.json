@@ -1,0 +1,16 @@
+{
+  "android_release": "13",
+  "sdk_level": "33",
+  "security_patch": "2024-01-01",
+  "build_id": "TP1A.220624.014",
+  "build_display_id": "TP1A.220624.014.G991BXXS7DWKA",
+  "build_fingerprint": "samsung/o1sxeea/o1s:13/TP1A.220624.014/G991BXXS7DWKA:user/release-keys",
+  "build_date": "2024-01-15",
+  "kernel_version": "5.4.210-android13-4-00001-g1234567890ab",
+  "selinux_status": "Enforcing",
+  "verified_boot_state": "green",
+  "verified_boot_hash": "abc123def456",
+  "flash_locked": "true",
+  "encryption_state": "encrypted",
+  "encryption_type": "file"
+}
