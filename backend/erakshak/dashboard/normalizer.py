@@ -169,6 +169,21 @@ class EvidenceNormalizer:
                 app="phone"
             )
             calls.append(call)
+            
+            # Format display name for timeline events
+            display_contact = f"{c.get('name')} ({c.get('number')})" if c.get("name") else c.get("number")
+            sender = display_contact if direction in ("incoming", "missed") else "Me"
+            receiver = "Me" if direction in ("incoming", "missed") else display_contact
+            
+            if direction == "incoming":
+                title = f"Call from {display_contact}"
+            elif direction == "outgoing":
+                title = f"Call to {display_contact}"
+            elif direction == "missed":
+                title = f"Missed call from {display_contact}"
+            else:
+                title = f"Call {direction}"
+                
             events.append(TimelineEvent(
                 id=call.id,
                 timestamp=call.timestamp,
@@ -177,9 +192,11 @@ class EvidenceNormalizer:
                 category="calls",
                 event_type="phone_call",
                 direction=call.direction,
-                title=f"Call {call.direction}",
+                title=title,
                 summary=f"Duration: {call.duration_seconds}s",
                 phone_number=c.get("number"),
+                sender=sender,
+                receiver=receiver,
                 confidence="high"
             ))
         return calls, events

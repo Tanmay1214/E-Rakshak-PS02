@@ -307,8 +307,22 @@ export default function CaseDashboard() {
       const columns = [
         { key: 'timestamp', label: 'Time', render: (val: any) => formatTimestamp(val) },
         { key: 'app', label: 'App', render: (val: string) => <span className="capitalize">{val}</span> },
-        { key: 'from_number', label: 'Caller' },
-        { key: 'to_number', label: 'Callee' },
+        { 
+          key: 'from_number', 
+          label: 'Caller',
+          render: (val: string, row: any) => {
+            if (val === 'Me') return 'Me';
+            return row.contact_name ? `${row.contact_name} (${val})` : val;
+          }
+        },
+        { 
+          key: 'to_number', 
+          label: 'Callee',
+          render: (val: string, row: any) => {
+            if (val === 'Me') return 'Me';
+            return row.contact_name ? `${row.contact_name} (${val})` : val;
+          }
+        },
         { key: 'direction', label: 'Type', render: (val: string) => <span className="capitalize">{val}</span> },
         { key: 'duration_seconds', label: 'Duration', render: (val: number) => formatDuration(val) }
       ];
