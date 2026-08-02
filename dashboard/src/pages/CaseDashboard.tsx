@@ -85,8 +85,8 @@ export default function CaseDashboard() {
           'signal': 'Signal'
         };
         filters.source = sourceMap[activeFilter];
-      } else if (activeFilter === 'sms') {
-        filters.source = 'SMS';
+      } else if (activeFilter === 'sms' || activeFilter === 'messages') {
+        filters.source = 'sms';
       } else if (activeFilter === 'browser') {
         filters.category = 'browser';
       } else if (activeFilter === 'location') {

@@ -20,7 +20,7 @@ export default function FiltersBar({
   
   const chips = [
     { id: 'all', label: 'All' },
-    { id: 'messages', label: 'Messages' },
+    { id: 'messages', label: 'SMS' },
     { id: 'calls', label: 'Calls' },
     { id: 'whatsapp', label: 'WhatsApp' },
     { id: 'telegram', label: 'Telegram' },
