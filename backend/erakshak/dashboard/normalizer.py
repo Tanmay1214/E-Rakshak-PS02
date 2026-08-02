@@ -123,8 +123,8 @@ class EvidenceNormalizer:
                 timestamp_sort=self.parse_timestamp(m.get("date")),
                 app="sms",
                 direction="incoming" if is_incoming else "outgoing",
-                sender=m.get("address") if is_incoming else "device",
-                receiver="device" if is_incoming else m.get("address"),
+                sender=m.get("address") if is_incoming else "Me",
+                receiver="Me" if is_incoming else m.get("address"),
                 body=m.get("body")
             )
             if "This message was deleted" in (msg.body or ""):
@@ -162,8 +162,8 @@ class EvidenceNormalizer:
                 timestamp_sort=self.parse_timestamp(c.get("date")),
                 call_type="voice",
                 direction=direction,
-                from_number=c.get("number") if direction in ("incoming", "missed") else "device",
-                to_number="device" if direction in ("incoming", "missed") else c.get("number"),
+                from_number=c.get("number") if direction in ("incoming", "missed") else "Me",
+                to_number="Me" if direction in ("incoming", "missed") else c.get("number"),
                 contact_name=c.get("name"),
                 duration_seconds=c.get("duration"),
                 app="phone"
@@ -304,10 +304,24 @@ class EvidenceNormalizer:
                     if isinstance(msgs, dict):
                         for m_id, m in msgs.items():
                             is_from_me = m.get("from_me", False)
-                            sender = "device" if is_from_me else contact_name
-                            receiver = contact_name if is_from_me else "device"
-                            direction = "outgoing" if is_from_me else "incoming"
                             
+                            is_group = "@g.us" in chat_id
+                            if is_group:
+                                if is_from_me:
+                                    sender = "Me"
+                                    receiver = contact_name
+                                    title = f"WhatsApp Group Message to {contact_name}"
+                                else:
+                                    actual_sender = m.get("sender") or "Unknown"
+                                    sender = f"{actual_sender} ({contact_name})"
+                                    receiver = "Me"
+                                    title = f"WhatsApp Group Message from {actual_sender} in {contact_name}"
+                            else:
+                                sender = "Me" if is_from_me else contact_name
+                                receiver = contact_name if is_from_me else "Me"
+                                title = f"WhatsApp Message from {sender}" if not is_from_me else f"WhatsApp Message to {receiver}"
+
+                            direction = "outgoing" if is_from_me else "incoming"
                             ts = m.get("timestamp") or m.get("date")
                             
                             msg = Message(
@@ -333,7 +347,7 @@ class EvidenceNormalizer:
                                 category="messages",
                                 event_type="whatsapp_message",
                                 direction=msg.direction,
-                                title=f"WhatsApp {msg.direction}",
+                                title=title,
                                 summary=msg.body,
                                 sender=msg.sender,
                                 receiver=msg.receiver,
@@ -347,6 +361,9 @@ class EvidenceNormalizer:
         raw_users = self.loader.load_telegram_users()
         user_map = {str(u.get("uid")): u.get("name", "Unknown") for u in raw_users if "uid" in u}
         
+        raw_chats = self.loader.load_telegram_chats()
+        chats_map = {str(c.get("uid")): c.get("name", "Unknown Group") for c in raw_chats if "uid" in c}
+        
         raw_msgs = self.loader.load_telegram_messages()
         for i, m in enumerate(raw_msgs):
             if "date" not in m: continue
@@ -355,9 +372,26 @@ class EvidenceNormalizer:
             direction = "outgoing" if is_out else "incoming"
             
             uid = str(m.get("uid", ""))
-            contact_name = user_map.get(uid, uid or "Unknown")
-            sender = "device" if is_out else contact_name
-            receiver = contact_name if is_out else "device"
+            
+            is_group = uid.startswith("-") or uid in chats_map or uid.replace("-", "") in chats_map
+            
+            if is_group:
+                group_id_abs = uid.replace("-", "")
+                group_name = chats_map.get(group_id_abs) or chats_map.get(uid) or f"Group_{uid}"
+                if is_out:
+                    sender = "Me"
+                    receiver = group_name
+                    title = f"Telegram Group Message to {group_name}"
+                else:
+                    sender = group_name
+                    receiver = "Me"
+                    title = f"Telegram Group Message from {group_name}"
+            else:
+                contact_name = user_map.get(uid, uid or "Unknown")
+                sender = "Me" if is_out else contact_name
+                receiver = contact_name if is_out else "Me"
+                title = f"Telegram Message from {sender}" if not is_out else f"Telegram Message to {receiver}"
+
             body = m.get("text") or ""
             
             msg = Message(
@@ -379,7 +413,7 @@ class EvidenceNormalizer:
                 category="messages",
                 event_type="telegram_message",
                 direction=msg.direction,
-                title="Telegram Message",
+                title=title,
                 summary=msg.body,
                 sender=msg.sender,
                 receiver=msg.receiver,
@@ -396,9 +430,11 @@ class EvidenceNormalizer:
             
             direction = "outgoing" if m.get("sent") else "incoming"
             contact_name = m.get("contact_name", "Unknown")
-            sender = "device" if direction == "outgoing" else contact_name
-            receiver = contact_name if direction == "outgoing" else "device"
+            sender = "Me" if direction == "outgoing" else contact_name
+            receiver = contact_name if direction == "outgoing" else "Me"
             body = m.get("message") or ""
+            
+            title = f"Signal Message from {sender}" if direction == "incoming" else f"Signal Message to {receiver}"
             
             msg = Message(
                 id=self.generate_id("signal", i, str(m.get("date")), body),
@@ -419,13 +455,14 @@ class EvidenceNormalizer:
                 category="messages",
                 event_type="signal_message",
                 direction=msg.direction,
-                title="Signal Message",
+                title=title,
                 summary=msg.body,
                 sender=msg.sender,
                 receiver=msg.receiver,
                 confidence="high"
             ))
         return messages, events
+
 
     def normalize_locations(self) -> Tuple[List[Location], List[TimelineEvent]]:
         locations = []

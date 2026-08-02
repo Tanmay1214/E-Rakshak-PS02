@@ -50,7 +50,7 @@ def test_timeline_builder_complete_flow(tmp_path: Path) -> None:
         case_folder_path=str(ex_dir),
         case_id=case_id,
         exhibit_id=exhibit_id,
-        recent_days=7,
+        recent_days=30,
         timezone="Asia/Kolkata",
         include_low_confidence=False,
         rebuild=True
@@ -149,7 +149,7 @@ def test_timeline_builder_with_low_confidence(tmp_path: Path) -> None:
         case_folder_path=str(ex_dir),
         case_id=case_id,
         exhibit_id=exhibit_id,
-        recent_days=7,
+        recent_days=30,
         timezone="Asia/Kolkata",
         include_low_confidence=True,
         rebuild=True
@@ -181,7 +181,7 @@ def test_timeline_builder_filters(tmp_path: Path) -> None:
         case_folder_path=str(ex_dir),
         case_id=case_id,
         exhibit_id=exhibit_id,
-        recent_days=7,
+        recent_days=30,
         filter_category="calls",
         rebuild=True
     )
@@ -208,4 +208,5 @@ def test_unified_pipeline_cli_parsing() -> None:
     assert args.case == "CASE004"
     assert args.exhibit == "EX004"
     assert args.recent_days == 5
+
 

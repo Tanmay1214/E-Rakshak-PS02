@@ -118,6 +118,12 @@ class CaseDashboardLoader:
             users.extend(self.load_jsonl(p))
         return users
 
+    def load_telegram_chats(self):
+        chats = []
+        for p in self._find_jsonl_files(self.derived_dir / "apps" / "telegram", "_chats.jsonl"):
+            chats.extend(self.load_jsonl(p))
+        return chats
+
     def load_telegram_messages(self):
         msgs = []
         for p in self._find_jsonl_files(self.derived_dir / "apps" / "telegram", "_messages.jsonl"):
