@@ -176,11 +176,11 @@ class EvidenceNormalizer:
             receiver = "Me" if direction in ("incoming", "missed") else display_contact
             
             if direction == "incoming":
-                title = f"Call from {display_contact}"
+                title = f"Call incoming to Me from {display_contact}"
             elif direction == "outgoing":
-                title = f"Call to {display_contact}"
+                title = f"Call outgoing from Me to {display_contact}"
             elif direction == "missed":
-                title = f"Missed call from {display_contact}"
+                title = f"Call missed to Me from {display_contact}"
             else:
                 title = f"Call {direction}"
                 
