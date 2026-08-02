@@ -62,6 +62,7 @@ export default function CaseDashboard() {
     'whatsapp', 'telegram', 'signal', 'sms', 'phone', 'chrome', 'system'
   ]);
   const [bucketMode, setBucketMode] = useState<'15m' | '1h' | 'exact'>('exact');
+  const [selectedMessageApp, setSelectedMessageApp] = useState<string>('all');
 
   useEffect(() => {
     fetchIntakeStatus()
@@ -116,7 +117,7 @@ export default function CaseDashboard() {
   
   const { events, loading: eventsLoading, total: totalEvents, loadMore } = useTimeline(getTimelineFilters());
 
-  const { messages, loading: messagesLoading, total: totalMessages } = useMessages();
+  const { messages, loading: messagesLoading, total: totalMessages } = useMessages(selectedMessageApp);
   const { calls, loading: callsLoading, total: totalCalls } = useCalls();
   const { contacts, loading: contactsLoading, total: totalContacts } = useContacts();
   const { media, loading: mediaLoading, total: totalMedia } = useMedia();
@@ -242,27 +243,65 @@ export default function CaseDashboard() {
     }
     
     if (activeView === 'messages') {
-      if (messages.length === 0 && !messagesLoading) {
-        return (
-          <div className="flex-1 flex items-center justify-center border border-border rounded-xl bg-panel-alt h-full p-8 text-center">
-            <div className="max-w-sm space-y-2">
-              <AlertCircle className="w-8 h-8 text-warning mx-auto" />
-              <p className="text-sm font-semibold text-text-primary">No messages found or Signal artifacts unavailable or encrypted.</p>
-              <p className="text-xs text-text-secondary">If testing Signal, ensure database is decrypted and key is present.</p>
-            </div>
-          </div>
-        );
-      }
-
       const columns = [
         { key: 'timestamp', label: 'Time', render: (val: any) => formatTimestamp(val) },
-        { key: 'app', label: 'App', render: (val: string) => <span className="capitalize text-accent">{val}</span> },
+        { key: 'app', label: 'App', render: (val: string) => <span className="capitalize text-accent font-bold">{val}</span> },
         { key: 'sender', label: 'Sender' },
         { key: 'receiver', label: 'Receiver' },
         { key: 'body', label: 'Message', render: (val: string) => <ExpandableText text={val} /> }
       ];
-      return <CategoryView title="Messages" columns={columns} data={messages} loading={messagesLoading} total={totalMessages} />;
+
+      return (
+        <div className="flex flex-col h-full space-y-4 overflow-hidden">
+          {/* Header titles */}
+          <div className="flex-shrink-0 select-none">
+            <h2 className="text-sm font-black tracking-wider uppercase text-text-primary">MESSAGES OUTBOX & INBOX</h2>
+            <p className="text-text-secondary text-[11px] font-semibold mt-0.5">
+              Acquired and normalized message chat threads across standard apps and SMS channels
+            </p>
+          </div>
+
+          {/* App Filter Switcher Chips */}
+          <div className="flex items-center gap-1.5 bg-panel border border-border p-1 rounded-lg w-fit flex-shrink-0 select-none">
+            {[
+              { id: 'all', label: 'All Messages' },
+              { id: 'sms', label: 'SMS History' },
+              { id: 'WhatsApp', label: 'WhatsApp' },
+              { id: 'Telegram', label: 'Telegram' },
+              { id: 'Signal', label: 'Signal' }
+            ].map(app => (
+              <button
+                key={app.id}
+                onClick={() => setSelectedMessageApp(app.id)}
+                className={`px-3 py-1 text-[10px] font-bold rounded uppercase tracking-wider transition-all duration-150 ${
+                  selectedMessageApp === app.id
+                    ? 'bg-accent text-white shadow-sm'
+                    : 'text-text-secondary hover:text-text-primary hover:bg-panel-alt'
+                }`}
+              >
+                {app.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Message List Grid */}
+          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+            {messages.length === 0 && !messagesLoading ? (
+              <div className="flex-1 flex items-center justify-center border border-border rounded-xl bg-panel-alt h-full p-8 text-center">
+                <div className="max-w-sm space-y-2 animate-in fade-in duration-200">
+                  <AlertCircle className="w-8 h-8 text-warning mx-auto animate-pulse" />
+                  <p className="text-sm font-semibold text-text-primary">No messages found for this app filter.</p>
+                  <p className="text-xs text-text-secondary">Verify that the acquisition pipeline successfully extracted chats from this source.</p>
+                </div>
+              </div>
+            ) : (
+              <CategoryView title="Messages" columns={columns} data={messages} loading={messagesLoading} total={totalMessages} />
+            )}
+          </div>
+        </div>
+      );
     }
+
     
     if (activeView === 'calls') {
       const columns = [

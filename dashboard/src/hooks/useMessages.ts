@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import type { Message } from '../types/evidence';
 import { fetchMessages } from '../services/api';
 
-export function useMessages() {
+export function useMessages(app?: string) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -11,7 +11,12 @@ export function useMessages() {
     let mounted = true;
     setLoading(true);
     
-    fetchMessages({ limit: 1000 })
+    const params: any = { limit: 1000 };
+    if (app && app !== 'all') {
+      params.app = app;
+    }
+    
+    fetchMessages(params)
       .then(res => {
         if (mounted) {
           // the api returns {"messages": [...], "total": ...}
@@ -28,7 +33,7 @@ export function useMessages() {
       });
       
     return () => { mounted = false; };
-  }, []);
+  }, [app]);
 
   return { messages, total, loading };
 }
