@@ -9,12 +9,16 @@ def resolve_timeline_range(
     recent_days: int,
     from_date: Optional[str],
     to_date: Optional[str],
-    timezone_name: str = "Asia/Kolkata"
+    timezone_name: str = "Asia/Kolkata",
+    from_datetime: Optional[str] = None,
+    to_datetime: Optional[str] = None
 ) -> dict[str, Any]:
-    """Resolve the start and end datetime limits for the timeline window."""
+    """Resolve start and end datetime limits for the timeline window."""
     # Resolve target timezone
-    if timezone_name == "Asia/Kolkata":
+    if timezone_name == "Asia/Kolkata" or timezone_name == "IST":
         tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    elif timezone_name == "UTC":
+        tz = datetime.timezone.utc
     else:
         try:
             from zoneinfo import ZoneInfo
@@ -24,26 +28,65 @@ def resolve_timeline_range(
 
     now = datetime.datetime.now(tz)
     
-    if from_date or to_date:
+    if from_datetime or to_datetime:
+        mode = "explicit_datetime"
+        if from_datetime:
+            try:
+                from_dt = datetime.datetime.strptime(from_datetime, "%Y-%m-%d %H:%M:%S")
+                from_dt = from_dt.replace(tzinfo=tz)
+            except ValueError as e:
+                raise ValueError(f"Invalid from-datetime: '{from_datetime}'. Expected format: YYYY-MM-DD HH:MM:SS") from e
+        else:
+            # only to_datetime is provided
+            try:
+                to_dt_temp = datetime.datetime.strptime(to_datetime, "%Y-%m-%d %H:%M:%S")
+                from_dt = to_dt_temp - datetime.timedelta(days=recent_days if recent_days > 0 else 7)
+                from_dt = from_dt.replace(tzinfo=tz)
+            except ValueError as e:
+                raise ValueError(f"Invalid to-datetime: '{to_datetime}'. Expected format: YYYY-MM-DD HH:MM:SS") from e
+
+        if to_datetime:
+            try:
+                to_dt = datetime.datetime.strptime(to_datetime, "%Y-%m-%d %H:%M:%S")
+                to_dt = to_dt.replace(tzinfo=tz)
+            except ValueError as e:
+                raise ValueError(f"Invalid to-datetime: '{to_datetime}'. Expected format: YYYY-MM-DD HH:MM:SS") from e
+        else:
+            to_dt = now
+    elif from_date or to_date:
         mode = "explicit"
         if from_date:
-            from_dt = datetime.datetime.strptime(from_date, "%Y-%m-%d")
-            from_dt = from_dt.replace(tzinfo=tz)
+            try:
+                from_dt = datetime.datetime.strptime(from_date, "%Y-%m-%d")
+                from_dt = from_dt.replace(tzinfo=tz)
+            except ValueError as e:
+                raise ValueError(f"Invalid from-date: '{from_date}'. Expected format: YYYY-MM-DD") from e
         else:
-            # only to_date is provided
-            to_dt_temp = datetime.datetime.strptime(to_date, "%Y-%m-%d")
-            from_dt = to_dt_temp - datetime.timedelta(days=recent_days)
-            from_dt = from_dt.replace(tzinfo=tz)
+            try:
+                to_dt_temp = datetime.datetime.strptime(to_date, "%Y-%m-%d")
+                from_dt = to_dt_temp - datetime.timedelta(days=recent_days if recent_days > 0 else 7)
+                from_dt = from_dt.replace(tzinfo=tz)
+            except ValueError as e:
+                raise ValueError(f"Invalid to-date: '{to_date}'. Expected format: YYYY-MM-DD") from e
 
         if to_date:
-            to_dt = datetime.datetime.strptime(to_date, "%Y-%m-%d")
-            to_dt = to_dt.replace(hour=23, minute=59, second=59, microsecond=999999, tzinfo=tz)
+            try:
+                to_dt = datetime.datetime.strptime(to_date, "%Y-%m-%d")
+                to_dt = to_dt.replace(hour=23, minute=59, second=59, microsecond=999999, tzinfo=tz)
+            except ValueError as e:
+                raise ValueError(f"Invalid to-date: '{to_date}'. Expected format: YYYY-MM-DD") from e
         else:
             to_dt = now
     else:
-        mode = "recent_days"
-        from_dt = now - datetime.timedelta(days=recent_days)
-        to_dt = now
+        if recent_days == 0:
+            mode = "all_events"
+            # Represent all events by setting extremely wide window
+            from_dt = datetime.datetime.fromtimestamp(0, tz)  # 1970-01-01
+            to_dt = now + datetime.timedelta(days=365 * 10)  # 10 years in the future
+        else:
+            mode = "recent_days"
+            from_dt = now - datetime.timedelta(days=recent_days)
+            to_dt = now
 
     return {
         "mode": mode,

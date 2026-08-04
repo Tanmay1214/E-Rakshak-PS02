@@ -6,13 +6,13 @@ function parseTimestampToDate(ts: string | number | undefined | null): Date | nu
     numVal = ts;
   } else if (typeof ts === 'string') {
     const trimmed = ts.trim();
-    if (/^\d+(\.\d+)?$/.test(trimmed)) {
+    if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
       numVal = parseFloat(trimmed);
     }
   }
 
   if (numVal !== null && !isNaN(numVal)) {
-    const ms = numVal < 10000000000 ? numVal * 1000 : numVal;
+    const ms = numVal < 100000000000 ? numVal * 1000 : numVal;
     return new Date(ms);
   }
 
@@ -43,6 +43,11 @@ export function formatEventTime(timestamp: string | number | undefined | null, t
 
 export function formatTimestamp(ts: string | number | undefined | null): string {
   if (!ts) return '';
+  const tsStr = String(ts).trim();
+  // If it's already a formatted display timestamp (e.g. "27 Jul 2026, 06:35:05 PM"), return as-is
+  if (/[a-zA-Z]{3}\s+\d{4}/.test(tsStr) && (tsStr.includes(",") || tsStr.includes("AM") || tsStr.includes("PM"))) {
+    return tsStr;
+  }
   const dateObj = parseTimestampToDate(ts);
   if (!dateObj) return String(ts);
   return `${formatEventDate(ts, undefined)} ${formatEventTime(ts, undefined)}`;

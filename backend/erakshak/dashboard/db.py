@@ -50,9 +50,10 @@ class DashboardDB:
             ''',
             "timeline_events": '''
                 CREATE TABLE IF NOT EXISTS timeline_events (
-                    id TEXT PRIMARY KEY, timestamp TEXT, timestamp_sort INTEGER,
+                    id TEXT PRIMARY KEY, case_id TEXT, exhibit_id TEXT, timestamp TEXT, timestamp_sort INTEGER,
+                    bucket_15m TEXT, bucket_1h TEXT,
                     source_app TEXT, source_type TEXT, event_type TEXT, category TEXT,
-                    direction TEXT, title TEXT, summary TEXT, sender TEXT, receiver TEXT,
+                    direction TEXT, title TEXT, summary TEXT, actor TEXT, sender TEXT, receiver TEXT,
                     phone_number TEXT, email TEXT, location_lat REAL, location_lon REAL,
                     location_accuracy REAL, media_path TEXT, thumbnail_path TEXT,
                     file_path TEXT, deleted_status TEXT, recovered_status TEXT,
@@ -195,6 +196,27 @@ class DashboardDB:
                     acquisition_tool_version TEXT, notes TEXT,
                     updated_at TEXT
                 )
+            ''',
+            "questioning_leads": '''
+                CREATE TABLE IF NOT EXISTS questioning_leads (
+                    lead_id TEXT PRIMARY KEY,
+                    case_id TEXT,
+                    exhibit_id TEXT,
+                    rule_id TEXT,
+                    severity TEXT,
+                    confidence TEXT,
+                    title TEXT,
+                    summary TEXT,
+                    suggested_question TEXT,
+                    category TEXT,
+                    source_apps TEXT,
+                    event_ids TEXT,
+                    evidence_count INTEGER,
+                    time_window_start INTEGER,
+                    time_window_end INTEGER,
+                    created_at TEXT,
+                    raw_json TEXT
+                )
             '''
         }
         for query in schemas.values():
@@ -212,6 +234,10 @@ class DashboardDB:
             "CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(timestamp_sort)",
             "CREATE INDEX IF NOT EXISTS idx_media_ts ON media(timestamp_sort)",
             "CREATE INDEX IF NOT EXISTS idx_locations_ts ON locations(timestamp_sort)",
+            "CREATE INDEX IF NOT EXISTS idx_leads_rule ON questioning_leads(rule_id)",
+            "CREATE INDEX IF NOT EXISTS idx_leads_severity ON questioning_leads(severity)",
+            "CREATE INDEX IF NOT EXISTS idx_leads_confidence ON questioning_leads(confidence)",
+            "CREATE INDEX IF NOT EXISTS idx_leads_category ON questioning_leads(category)",
             "CREATE INDEX IF NOT EXISTS idx_browser_history_ts ON browser_history(timestamp_sort)",
             "CREATE INDEX IF NOT EXISTS idx_browser_searches_ts ON browser_searches(timestamp_sort)",
             "CREATE INDEX IF NOT EXISTS idx_browser_downloads_ts ON browser_downloads(timestamp_sort)"

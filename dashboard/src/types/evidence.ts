@@ -78,6 +78,8 @@ export interface TimelineEvent {
   parser?: string;
   raw_ref?: string;
   raw_json?: string;
+  display_date?: string;
+  display_time?: string;
 }
 
 export interface TimelineResponse {

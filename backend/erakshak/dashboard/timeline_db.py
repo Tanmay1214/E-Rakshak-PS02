@@ -81,11 +81,8 @@ def save_events_to_db(
     conn = sqlite3.connect(str(db_path))
     cursor = conn.cursor()
 
-    if rebuild and case_id and exhibit_id:
-        cursor.execute(
-            "DELETE FROM timeline_events WHERE case_id = ? AND exhibit_id = ?",
-            (case_id, exhibit_id)
-        )
+    if rebuild:
+        cursor.execute("DELETE FROM timeline_events")
 
     query = """
         INSERT OR REPLACE INTO timeline_events (

@@ -3,7 +3,7 @@ import type { TimelineEvent } from '../types/evidence';
 import { X, AlertTriangle, Copy, Check } from 'lucide-react';
 import { getIconForSource } from '../utils/icons';
 import { formatTimestamp, formatEventTime } from '../utils/formatters';
-import { fetchTimelineEvent } from '../services/api';
+import { fetchTimelineEvent, fetchTimelineEventContext } from '../services/api';
 import LoadingSpinner from './LoadingSpinner';
 
 interface EventDetailsPanelProps {
@@ -11,34 +11,57 @@ interface EventDetailsPanelProps {
   onClose?: () => void;
   filteredEvents?: TimelineEvent[];
   onSelectEvent?: (event: TimelineEvent) => void;
+  caseId?: string;
+  exhibitId?: string;
 }
 
 export default function EventDetailsPanel({
   eventId,
   onClose,
-  filteredEvents = [],
-  onSelectEvent
+  onSelectEvent,
+  caseId,
+  exhibitId
 }: EventDetailsPanelProps) {
   const [event, setEvent] = useState<TimelineEvent | null>(null);
   const [loading, setLoading] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [contextData, setContextData] = useState<{
+    previous: TimelineEvent[];
+    current: TimelineEvent | null;
+    next: TimelineEvent[];
+  }>({
+    previous: [],
+    current: null,
+    next: []
+  });
 
   useEffect(() => {
     if (!eventId) {
       setEvent(null);
+      setContextData({ previous: [], current: null, next: [] });
       setLoading(false);
       return;
     }
     setLoading(true);
-    fetchTimelineEvent(eventId)
-      .then(res => {
-        setEvent(res);
+    
+    const contextFetch = caseId && exhibitId
+      ? fetchTimelineEventContext(caseId, exhibitId, eventId)
+      : fetchTimelineEventContext(undefined, undefined, eventId);
+
+    Promise.all([
+      fetchTimelineEvent(eventId),
+      contextFetch
+    ])
+      .then(([eventRes, contextRes]) => {
+        setEvent(eventRes);
+        setContextData(contextRes);
         setLoading(false);
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error("Error loading event detail / context", err);
         setLoading(false);
       });
-  }, [eventId]);
+  }, [eventId, caseId, exhibitId]);
 
   const copyToClipboard = (text: string, fieldName: string) => {
     navigator.clipboard.writeText(text).then(() => {
@@ -56,11 +79,12 @@ export default function EventDetailsPanel({
     return str;
   };
 
-  // Get index and build timeline context list
-  const selectedIndex = eventId && filteredEvents ? filteredEvents.findIndex(e => e.id === eventId) : -1;
-  const contextEvents = selectedIndex !== -1
-    ? filteredEvents.slice(Math.max(0, selectedIndex - 2), Math.min(filteredEvents.length, selectedIndex + 3))
-    : [];
+  // Compile context list chronologically: previous -> current -> next
+  const contextEvents = [
+    ...contextData.previous,
+    ...(contextData.current ? [contextData.current] : (event ? [event] : [])),
+    ...contextData.next
+  ];
 
   if (!eventId) {
     return (
@@ -145,43 +169,64 @@ export default function EventDetailsPanel({
         <div className="space-y-1.5 text-[11px] font-mono">
           
           <div className="flex justify-between items-baseline border-b border-border/40 py-1">
+            <span className="text-text-secondary">Event ID:</span>
+            <span className="text-text-primary font-bold text-right break-all max-w-[200px] select-all">{event.id || 'Not available'}</span>
+          </div>
+
+          <div className="flex justify-between items-baseline border-b border-border/40 py-1">
             <span className="text-text-secondary">Event Type:</span>
-            <span className="text-text-primary font-bold text-right">{event.event_type}</span>
+            <span className="text-text-primary font-bold text-right">{event.event_type || 'Not available'}</span>
           </div>
 
           <div className="flex justify-between items-baseline border-b border-border/40 py-1">
             <span className="text-text-secondary">Timestamp:</span>
-            <span className="text-text-primary font-bold text-right">{formatTimestamp(event.timestamp)}</span>
+            <span className="text-text-primary font-bold text-right">{formatTimestamp(event.timestamp) || 'Not available'}</span>
           </div>
 
           <div className="flex justify-between items-baseline border-b border-border/40 py-1">
             <span className="text-text-secondary">Source App:</span>
-            <span className="text-text-primary font-bold text-right">{event.source_app || 'None'}</span>
+            <span className="text-text-primary font-bold text-right">{event.source_app || 'Not available'}</span>
           </div>
 
           <div className="flex justify-between items-baseline border-b border-border/40 py-1">
             <span className="text-text-secondary">Source Type:</span>
-            <span className="text-text-primary font-bold text-right">{event.source_type || 'None'}</span>
+            <span className="text-text-primary font-bold text-right">{event.source_type || 'Not available'}</span>
+          </div>
+
+          <div className="flex justify-between items-baseline border-b border-border/40 py-1">
+            <span className="text-text-secondary">Category:</span>
+            <span className="text-text-primary font-bold text-right">{event.category || 'Not available'}</span>
           </div>
 
           <div className="flex justify-between items-baseline border-b border-border/40 py-1">
             <span className="text-text-secondary">Direction:</span>
-            <span className="text-text-primary font-bold capitalize text-right">{event.direction || 'n/a'}</span>
+            <span className="text-text-primary font-bold capitalize text-right">{event.direction || 'Not available'}</span>
           </div>
 
-          {event.sender && (
-            <div className="flex justify-between items-baseline border-b border-border/40 py-1">
-              <span className="text-text-secondary">From:</span>
-              <span className="text-text-primary font-bold text-right truncate max-w-[180px]" title={event.sender}>{redactValue(event.sender)}</span>
-            </div>
-          )}
+          <div className="flex justify-between items-baseline border-b border-border/40 py-1">
+            <span className="text-text-secondary">From:</span>
+            <span className="text-text-primary font-bold text-right truncate max-w-[180px]" title={event.sender || ''}>{redactValue(event.sender) || 'Not available'}</span>
+          </div>
 
-          {event.receiver && (
-            <div className="flex justify-between items-baseline border-b border-border/40 py-1">
-              <span className="text-text-secondary">To:</span>
-              <span className="text-text-primary font-bold text-right truncate max-w-[180px]" title={event.receiver}>{redactValue(event.receiver)}</span>
-            </div>
-          )}
+          <div className="flex justify-between items-baseline border-b border-border/40 py-1">
+            <span className="text-text-secondary">To:</span>
+            <span className="text-text-primary font-bold text-right truncate max-w-[180px]" title={event.receiver || ''}>{redactValue(event.receiver) || 'Not available'}</span>
+          </div>
+
+          <div className="flex justify-between items-baseline border-b border-border/40 py-1">
+            <span className="text-text-secondary">Phone Number:</span>
+            <span className="text-text-primary font-bold text-right truncate max-w-[180px]">{event.phone_number || 'Not available'}</span>
+          </div>
+
+          <div className="flex justify-between items-baseline border-b border-border/40 py-1">
+            <span className="text-text-secondary">Email:</span>
+            <span className="text-text-primary font-bold text-right truncate max-w-[180px]">{event.email || 'Not available'}</span>
+          </div>
+
+          <div className="flex flex-col gap-0.5 border-b border-border/40 py-1">
+            <span className="text-text-secondary">Message/Summary:</span>
+            <span className="text-text-primary font-bold break-words leading-tight text-left mt-0.5">{redactValue(event.summary) || 'Not available'}</span>
+          </div>
 
           <div className="flex justify-between items-baseline border-b border-border/40 py-1">
             <span className="text-text-secondary">Deleted Status:</span>
@@ -190,7 +235,7 @@ export default function EventDetailsPanel({
                 ? 'bg-red-500/15 text-red-500 border border-red-500/25' 
                 : 'text-text-secondary/70'
             }`}>
-              {event.deleted ? 'Deleted Marker' : 'Not Deleted'}
+              {event.deleted_status || 'Not available'}
             </span>
           </div>
 
@@ -201,29 +246,25 @@ export default function EventDetailsPanel({
                 ? 'bg-emerald-500/15 text-emerald-500 border border-emerald-500/25 animate-pulse' 
                 : 'text-text-secondary/70'
             }`}>
-              {event.recovered ? 'Recovered' : 'Not Recovered'}
+              {event.recovered_status || 'Not available'}
             </span>
           </div>
 
-          {event.parser && (
-            <div className="flex justify-between items-baseline border-b border-border/40 py-1">
-              <span className="text-text-secondary">Parser:</span>
-              <span className="text-text-primary font-bold text-right">{event.parser}</span>
-            </div>
-          )}
+          <div className="flex justify-between items-baseline border-b border-border/40 py-1">
+            <span className="text-text-secondary">Parser:</span>
+            <span className="text-text-primary font-bold text-right">{event.parser || 'Not available'}</span>
+          </div>
 
-          {event.source_file && (
-            <div className="flex flex-col gap-0.5 border-b border-border/40 py-1">
-              <span className="text-text-secondary">Source File:</span>
-              <span className="text-text-primary font-bold break-all leading-tight text-right select-all">{event.source_file}</span>
-            </div>
-          )}
+          <div className="flex flex-col gap-0.5 border-b border-border/40 py-1">
+            <span className="text-text-secondary">Source File:</span>
+            <span className="text-text-primary font-bold break-all leading-tight text-right select-all">{event.source_file || 'Not available'}</span>
+          </div>
 
-          {event.source_hash && (
-            <div className="flex flex-col gap-0.5 border-b border-border/40 py-1">
-              <span className="text-text-secondary">Hash:</span>
-              <div className="flex gap-2 items-center justify-between mt-0.5">
-                <span className="text-text-primary font-bold break-all select-all flex-1 text-left">{getDisplayHash(event.source_hash)}</span>
+          <div className="flex flex-col gap-0.5 border-b border-border/40 py-1">
+            <span className="text-text-secondary">Hash:</span>
+            <div className="flex gap-2 items-center justify-between mt-0.5">
+              <span className="text-text-primary font-bold break-all select-all flex-1 text-left">{event.source_hash ? getDisplayHash(event.source_hash) : 'Not available'}</span>
+              {event.source_hash && (
                 <button 
                   onClick={() => copyToClipboard(event.source_hash || '', 'hash')} 
                   className="p-1 bg-panel-alt border border-border rounded hover:bg-border text-text-secondary hover:text-text-primary"
@@ -231,22 +272,21 @@ export default function EventDetailsPanel({
                 >
                   {copiedField === 'hash' ? <Check className="w-3 h-3 text-success" /> : <Copy className="w-3 h-3" />}
                 </button>
-              </div>
+              )}
             </div>
-          )}
+          </div>
 
-          {event.confidence && (
-            <div className="flex justify-between items-center border-b border-border/40 py-1">
-              <span className="text-text-secondary">Confidence:</span>
-              <span className={`px-1.5 py-0.5 rounded border text-[9px] font-extrabold uppercase ${
-                event.confidence.toLowerCase() === 'high' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
-                event.confidence.toLowerCase() === 'medium' ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' :
-                'bg-red-500/10 border-red-500/30 text-red-400'
-              }`}>
-                {event.confidence}
-              </span>
-            </div>
-          )}
+          <div className="flex justify-between items-center border-b border-border/40 py-1">
+            <span className="text-text-secondary">Confidence:</span>
+            <span className={`px-1.5 py-0.5 rounded border text-[9px] font-extrabold uppercase ${
+              event.confidence && event.confidence.toLowerCase() === 'high' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
+              event.confidence && event.confidence.toLowerCase() === 'medium' ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' :
+              event.confidence && event.confidence.toLowerCase() === 'low' ? 'bg-red-500/10 border-red-500/30 text-red-400' :
+              'bg-slate-500/10 border-slate-500/30 text-slate-400'
+            }`}>
+              {event.confidence || 'Not available'}
+            </span>
+          </div>
         </div>
 
         {/* TIMELINE CONTEXT Section */}

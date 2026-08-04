@@ -1100,6 +1100,25 @@ def cmd_build_timeline(args: argparse.Namespace) -> None:
     print_banner()
     print(f"[*] Build Unified Timeline - Case: {args.case}  Exhibit: {args.exhibit}")
 
+    # Validation of datetimes/dates
+    import datetime
+    for name, val in [("from-datetime", getattr(args, "from_datetime", None)), 
+                      ("to-datetime", getattr(args, "to_datetime", None))]:
+        if val:
+            try:
+                datetime.datetime.strptime(val, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                print(f"[ERROR] Invalid {name}: '{val}'. Expected format: YYYY-MM-DD HH:MM:SS")
+                sys.exit(1)
+    for name, val in [("from-date", getattr(args, "from_date", None)), 
+                      ("to-date", getattr(args, "to_date", None))]:
+        if val:
+            try:
+                datetime.datetime.strptime(val, "%Y-%m-%d")
+            except ValueError:
+                print(f"[ERROR] Invalid {name}: '{val}'. Expected format: YYYY-MM-DD")
+                sys.exit(1)
+
     from erakshak.dashboard.timeline_builder import build_timeline
 
     try:
@@ -1115,7 +1134,9 @@ def cmd_build_timeline(args: argparse.Namespace) -> None:
             rebuild=args.rebuild,
             filter_category=args.category,
             filter_source_app=args.source_app,
-            filter_source_type=args.source_type
+            filter_source_type=args.source_type,
+            from_datetime=getattr(args, "from_datetime", None),
+            to_datetime=getattr(args, "to_datetime", None)
         )
 
         if summary['total_events'] == 0:
@@ -1413,6 +1434,25 @@ def cmd_build_dashboard_index(args) -> None:
     if not exhibit_root.exists():
         print(f"[ERROR] Case folder not found: {exhibit_root}")
         sys.exit(1)
+        
+    # Validation of datetimes/dates
+    import datetime
+    for name, val in [("from-datetime", getattr(args, "from_datetime", None)), 
+                      ("to-datetime", getattr(args, "to_datetime", None))]:
+        if val:
+            try:
+                datetime.datetime.strptime(val, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                print(f"[ERROR] Invalid {name}: '{val}'. Expected format: YYYY-MM-DD HH:MM:SS")
+                sys.exit(1)
+    for name, val in [("from-date", getattr(args, "from_date", None)), 
+                      ("to-date", getattr(args, "to_date", None))]:
+        if val:
+            try:
+                datetime.datetime.strptime(val, "%Y-%m-%d")
+            except ValueError:
+                print(f"[ERROR] Invalid {name}: '{val}'. Expected format: YYYY-MM-DD")
+                sys.exit(1)
     
     print(f"Building dashboard evidence index...")
     print(f"  Case:    {case_id}")
@@ -1423,6 +1463,30 @@ def cmd_build_dashboard_index(args) -> None:
     from erakshak.dashboard.dashboard_indexer import build_evidence_index
     result = build_evidence_index(exhibit_root, case_id, exhibit_id)
     
+    # Run timeline compilation as part of indexing
+    print(f"Compiling Level 1 Unified Timeline...")
+    from erakshak.dashboard.timeline_builder import build_timeline
+    try:
+        build_timeline(
+            case_folder_path=str(exhibit_root.resolve()),
+            case_id=case_id,
+            exhibit_id=exhibit_id,
+            recent_days=getattr(args, "recent_days", 7),
+            from_date=getattr(args, "from_date", None),
+            to_date=getattr(args, "to_date", None),
+            timezone=getattr(args, "timezone", "Asia/Kolkata"),
+            include_low_confidence=getattr(args, "include_low_confidence", False),
+            rebuild=getattr(args, "rebuild", False),
+            filter_category=getattr(args, "category", None),
+            filter_source_app=getattr(args, "source_app", None),
+            filter_source_type=getattr(args, "source_type", None),
+            from_datetime=getattr(args, "from_datetime", None),
+            to_datetime=getattr(args, "to_datetime", None)
+        )
+    except Exception as e:
+        print(f"[ERROR] Failed to compile timeline: {e}")
+        sys.exit(1)
+    
     print(f"\nEvidence index built successfully!")
     print(f"  Database: {result['db_path']}")
     print(f"  Total events: {result.get('total_events', 0)}")
@@ -1432,6 +1496,57 @@ def cmd_build_dashboard_index(args) -> None:
     print(f"  Media:        {result.get('total_media', 0)}")
     print(f"  Apps:         {result.get('total_apps', 0)}")
     print(f"  Accounts:     {result.get('total_accounts', 0)}")
+    print()
+
+def cmd_build_questioning_leads(args) -> None:
+    """Build E-RAKSHAK questioning leads."""
+    print_banner()
+    case_id = args.case
+    exhibit_id = args.exhibit
+    output_root = args.output
+    
+    exhibit_root = Path(output_root) / case_id / exhibit_id
+    if not exhibit_root.exists():
+        print(f"[ERROR] Case folder not found: {exhibit_root}")
+        sys.exit(1)
+        
+    # Date/Time format validation
+    import datetime
+    for name, val in [("from-datetime", getattr(args, "from_datetime", None)), 
+                      ("to-datetime", getattr(args, "to_datetime", None))]:
+        if val:
+            try:
+                datetime.datetime.strptime(val, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                print(f"[ERROR] Invalid {name}: '{val}'. Expected format: YYYY-MM-DD HH:MM:SS")
+                sys.exit(1)
+                
+    print(f"Generating questioning leads...")
+    print(f"  Case:    {case_id}")
+    print(f"  Exhibit: {exhibit_id}")
+    print(f"  Folder:  {exhibit_root}")
+    print()
+    
+    from erakshak.dashboard.leads_engine import run_leads_engine
+    try:
+        res = run_leads_engine(
+            case_folder_path=str(exhibit_root.resolve()),
+            case_id=case_id,
+            exhibit_id=exhibit_id,
+            recent_days=getattr(args, "recent_days", 7),
+            from_datetime=getattr(args, "from_datetime", None),
+            to_datetime=getattr(args, "to_datetime", None),
+            watchlist_path=getattr(args, "watchlist", None),
+            min_severity=getattr(args, "min_severity", "medium"),
+            rebuild=getattr(args, "rebuild", False)
+        )
+        print(f"Leads generation completed successfully!")
+        print(f"  Total generated: {res['total_generated']}")
+        print(f"  JSON output:     {res['json_path']}")
+        print(f"  JSONL output:    {res['jsonl_path']}")
+    except Exception as e:
+        print(f"[ERROR] Failed to generate questioning leads: {e}")
+        sys.exit(1)
     print()
 
 def cmd_dashboard(args) -> None:
@@ -1689,6 +1804,8 @@ def build_parser() -> argparse.ArgumentParser:
     
     # Time window limits
     sp_timeline.add_argument("--recent-days", type=int, default=7, help="Recent data window in days (default: 7)")
+    sp_timeline.add_argument("--from-datetime", help="Custom datetime range start (YYYY-MM-DD HH:MM:SS)")
+    sp_timeline.add_argument("--to-datetime", help="Custom datetime range end (YYYY-MM-DD HH:MM:SS)")
     sp_timeline.add_argument("--from-date", help="Custom date range start (YYYY-MM-DD)")
     sp_timeline.add_argument("--to-date", help="Custom date range end (YYYY-MM-DD)")
     sp_timeline.add_argument("--timezone", default="Asia/Kolkata", help="Timezone context (default: Asia/Kolkata)")
@@ -1747,7 +1864,34 @@ def build_parser() -> argparse.ArgumentParser:
     sp_idx.add_argument("--case", required=True, help="Case identifier (e.g. CASE001)")
     sp_idx.add_argument("--exhibit", required=True, help="Exhibit identifier (e.g. EX001)")
     sp_idx.add_argument("--output", default="cases", help="Output root directory (default: cases)")
+    
+    # Timeline configuration arguments
+    sp_idx.add_argument("--recent-days", type=int, default=7, help="Recent data window in days (default: 7)")
+    sp_idx.add_argument("--from-datetime", help="Custom datetime range start (YYYY-MM-DD HH:MM:SS)")
+    sp_idx.add_argument("--to-datetime", help="Custom datetime range end (YYYY-MM-DD HH:MM:SS)")
+    sp_idx.add_argument("--from-date", help="Custom date range start (YYYY-MM-DD)")
+    sp_idx.add_argument("--to-date", help="Custom date range end (YYYY-MM-DD)")
+    sp_idx.add_argument("--timezone", default="Asia/Kolkata", help="Timezone context (default: Asia/Kolkata)")
+    sp_idx.add_argument("--include-low-confidence", action="store_true", help="Include low confidence events")
+    sp_idx.add_argument("--rebuild", action="store_true", help="Clear and rebuild database timeline rows")
+    sp_idx.add_argument("--category", help="Filter by event category")
+    sp_idx.add_argument("--source-app", help="Filter by source app")
+    sp_idx.add_argument("--source-type", help="Filter by source type")
+    
     sp_idx.set_defaults(func=cmd_build_dashboard_index)
+
+    # ── build-questioning-leads ───────────────────────────────────
+    sp_leads = subparsers.add_parser("build-questioning-leads", help="Build questioning leads from timeline events")
+    sp_leads.add_argument("--case", required=True, help="Case identifier (e.g. CASE001)")
+    sp_leads.add_argument("--exhibit", required=True, help="Exhibit identifier (e.g. EX001)")
+    sp_leads.add_argument("--output", default="cases", help="Output root directory (default: cases)")
+    sp_leads.add_argument("--recent-days", type=int, default=7, help="Recent data window in days (default: 7)")
+    sp_leads.add_argument("--from-datetime", help="Custom datetime range start (YYYY-MM-DD HH:MM:SS)")
+    sp_leads.add_argument("--to-datetime", help="Custom datetime range end (YYYY-MM-DD HH:MM:SS)")
+    sp_leads.add_argument("--watchlist", help="Path to custom watchlist JSON file")
+    sp_leads.add_argument("--min-severity", default="medium", help="Minimum severity of leads to generate (critical/high/medium/low)")
+    sp_leads.add_argument("--rebuild", action="store_true", help="Clear and rebuild questioning leads database rows")
+    sp_leads.set_defaults(func=cmd_build_questioning_leads)
 
     # ── dashboard ─────────────────────────────────────────────────
     sp_dash = subparsers.add_parser("dashboard", help="Start forensic preview dashboard")

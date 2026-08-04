@@ -39,6 +39,23 @@ export async function fetchTimelineEvent(eventId: string): Promise<TimelineEvent
   return fetchJSON<TimelineEvent>(`${API_BASE}/timeline/${eventId}`);
 }
 
+export interface TimelineContextResponse {
+  previous: TimelineEvent[];
+  current: TimelineEvent;
+  next: TimelineEvent[];
+}
+
+export async function fetchTimelineEventContext(
+  caseId: string | undefined,
+  exhibitId: string | undefined,
+  eventId: string
+): Promise<TimelineContextResponse> {
+  if (caseId && exhibitId) {
+    return fetchJSON<TimelineContextResponse>(`${API_BASE}/cases/${caseId}/${exhibitId}/timeline/${eventId}/context`);
+  }
+  return fetchJSON<TimelineContextResponse>(`${API_BASE}/timeline/${eventId}/context`);
+}
+
 export async function fetchMessages(params: any): Promise<{ data: Message[], total: number }> {
   const query = new URLSearchParams(cleanParams(params)).toString();
   return fetchJSON(`${API_BASE}/messages?${query}`);
@@ -156,4 +173,67 @@ export async function updateEvidenceMetadata(data: Partial<EvidenceMetadata>): P
   const res = await fetch('/api/evidence-metadata', { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data) });
   if (!res.ok) throw new Error(`API Error: ${res.statusText}`);
   return res.json();
+}
+
+export interface QuestioningLead {
+  lead_id: string;
+  case_id: string;
+  exhibit_id: string;
+  rule_id: string;
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  confidence: 'high' | 'medium' | 'low';
+  title: string;
+  summary: string;
+  suggested_question: string;
+  category: string;
+  source_apps: string[];
+  event_ids: string[];
+  evidence_count?: number;
+  time_window_start?: number;
+  time_window_end?: number;
+  created_at: string;
+  raw_json?: string;
+}
+
+export interface LeadsSummary {
+  total: number;
+  by_severity: Record<string, number>;
+  by_rule: Record<string, number>;
+  by_category: Record<string, number>;
+  critical_count: number;
+  high_count: number;
+  generated_at: string;
+  disclaimer: string;
+}
+
+export async function fetchQuestioningLeads(
+  caseId: string,
+  exhibitId: string,
+  filters: { severity?: string; confidence?: string; category?: string; rule_id?: string; q?: string; limit?: number; offset?: number } = {}
+): Promise<{ leads: QuestioningLead[] }> {
+  const query = new URLSearchParams(cleanParams(filters)).toString();
+  return fetchJSON<{ leads: QuestioningLead[] }>(`${API_BASE}/cases/${caseId}/${exhibitId}/leads?${query}`);
+}
+
+export async function fetchQuestioningLeadsSummary(
+  caseId: string,
+  exhibitId: string
+): Promise<LeadsSummary> {
+  return fetchJSON<LeadsSummary>(`${API_BASE}/cases/${caseId}/${exhibitId}/leads/summary`);
+}
+
+export async function fetchQuestioningLeadDetail(
+  caseId: string,
+  exhibitId: string,
+  leadId: string
+): Promise<QuestioningLead> {
+  return fetchJSON<QuestioningLead>(`${API_BASE}/cases/${caseId}/${exhibitId}/leads/${leadId}`);
+}
+
+export async function fetchQuestioningLeadEvents(
+  caseId: string,
+  exhibitId: string,
+  leadId: string
+): Promise<TimelineEvent[]> {
+  return fetchJSON<TimelineEvent[]>(`${API_BASE}/cases/${caseId}/${exhibitId}/leads/${leadId}/events`);
 }

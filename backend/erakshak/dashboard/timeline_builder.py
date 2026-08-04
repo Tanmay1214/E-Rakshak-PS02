@@ -41,13 +41,38 @@ def build_timeline(
     rebuild: bool = False,
     filter_category: Optional[str] = None,
     filter_source_app: Optional[str] = None,
-    filter_source_type: Optional[str] = None
+    filter_source_type: Optional[str] = None,
+    from_datetime: Optional[str] = None,
+    to_datetime: Optional[str] = None
 ) -> Dict[str, Any]:
     """Orchestrate the Unified forensic timeline building process."""
     case_folder = Path(case_folder_path).resolve()
     
+    # Try to auto-detect device timezone from preflight.json if default "Asia/Kolkata" is specified
+    resolved_timezone = timezone
+    if resolved_timezone == "Asia/Kolkata":
+        preflight_path = case_folder / "acquisition" / "preflight.json"
+        if preflight_path.exists():
+            try:
+                with open(preflight_path, "r", encoding="utf-8") as f:
+                    pref_data = json.load(f)
+                    device_time = pref_data.get("device_time_raw", "")
+                    if "IST" in device_time:
+                        resolved_timezone = "Asia/Kolkata"
+                    elif "UTC" in device_time or "GMT" in device_time:
+                        resolved_timezone = "UTC"
+            except Exception:
+                pass
+
     # 1. Resolve date range
-    range_info = resolve_timeline_range(recent_days, from_date, to_date, timezone)
+    range_info = resolve_timeline_range(
+        recent_days=recent_days,
+        from_date=from_date,
+        to_date=to_date,
+        timezone_name=resolved_timezone,
+        from_datetime=from_datetime,
+        to_datetime=to_datetime
+    )
     from_dt = range_info["from_dt"]
     to_dt = range_info["to_dt"]
 

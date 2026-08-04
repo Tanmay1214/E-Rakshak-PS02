@@ -307,3 +307,259 @@ def test_no_encryption_key_in_db(tmp_path):
         # The key in message body is acceptable content, but check it's not in integrity sections
         # This is a basic smoke test
         assert "This report is a rapid forensic preview only" in content or "forensic preview" in content.lower()
+
+
+# ─── 15. Advanced timeline endpoints and sanitization ──────────────────
+def test_timeline_advanced_endpoints(tmp_path):
+    from erakshak.dashboard.api import create_dashboard_app
+    from erakshak.dashboard.dashboard_indexer import build_evidence_index
+    from erakshak.dashboard.timeline_builder import build_timeline
+    from fastapi.testclient import TestClient
+
+    exhibit_root = _setup_case_folder(tmp_path)
+    # Write sample sms
+    sms_path = exhibit_root / "derived" / "sms_messages.jsonl"
+    sms_path.write_text(
+        json.dumps({"id": "sms_1", "address": "+1111", "body": "Hello", "date": "1785149686000", "type": "1"}) + "\n" +
+        json.dumps({"id": "sms_2", "address": "+2222", "body": "World secret password=123", "date": "1785157307000", "type": "2", "deleted_status": "deleted_marker"}) + "\n" +
+        json.dumps({"id": "sms_3", "address": "+3333", "body": "Low confidence test", "date": "1785160000000", "type": "1"}) + "\n",
+        encoding="utf-8"
+    )
+    
+    # Write preflight
+    pref_path = exhibit_root / "acquisition" / "preflight.json"
+    pref_path.write_text(
+        json.dumps({"case_id": "CASE002", "exhibit_id": "EXHIBIT002", "device_time_raw": "Mon Jul 27 18:33:58 IST 2026"}) + "\n",
+        encoding="utf-8"
+    )
+
+    build_evidence_index(exhibit_root, "CASE002", "EXHIBIT002")
+    build_timeline(
+        case_folder_path=str(exhibit_root),
+        case_id="CASE002",
+        exhibit_id="EXHIBIT002",
+        recent_days=0, # All events
+        timezone="Asia/Kolkata",
+        rebuild=True
+    )
+    
+    # We must explicitly set one event to low confidence and add raw_json for testing
+    db_path = exhibit_root / "derived" / "evidence_index.db"
+    conn = sqlite3.connect(db_path)
+    # Modify sms_3 to low confidence and add raw_json with credentials
+    conn.execute("UPDATE timeline_events SET confidence = 'low' WHERE summary LIKE '%Low confidence%'")
+    conn.execute(
+        "UPDATE timeline_events SET raw_json = ? WHERE summary LIKE '%secret%'",
+        (json.dumps({"secret_key": "xyz123", "body": "original body"}),)
+    )
+    conn.commit()
+    
+    # Retrieve the event IDs for assertions
+    sms_1_id = conn.execute("SELECT id FROM timeline_events WHERE summary LIKE '%Hello%'").fetchone()[0]
+    sms_2_id = conn.execute("SELECT id FROM timeline_events WHERE summary LIKE '%secret%'").fetchone()[0]
+    sms_3_id = conn.execute("SELECT id FROM timeline_events WHERE summary LIKE '%confidence%'").fetchone()[0]
+    conn.close()
+
+    app = create_dashboard_app(db_path, exhibit_root, "CASE002", "EXHIBIT002")
+    client = TestClient(app)
+
+    # 1. Test basic timeline query
+    res = client.get("/api/cases/CASE002/EXHIBIT002/timeline")
+    assert res.status_code == 200
+    data = res.json()
+    # By default, low confidence events are omitted, so we should get 2 events (sms_1, sms_2)
+    assert len(data["events"]) == 2
+    
+    # Verify Schema: all 29 target keys present, and deleted/recovered booleans populated
+    ev = data["events"][0]
+    for key in ["id", "timestamp", "timestamp_sort", "display_date", "display_time", "deleted", "recovered"]:
+        assert key in ev
+    
+    # Verify raw_json is stripped by default
+    assert "raw_json" not in ev
+    
+    # Verify credentials redacted (e.g. password=123 redacted or secrets redacted)
+    # Let's check second event which has password in body
+    ev_2 = [e for e in data["events"] if e["id"] == sms_2_id][0]
+    # deleted boolean maps from deleted_status
+    assert ev_2["deleted"] is True
+    
+    # 2. Test timeline query with include_low=true
+    res_low = client.get("/api/cases/CASE002/EXHIBIT002/timeline?include_low=true")
+    assert len(res_low.json()["events"]) == 3
+
+    # 3. Test timeline query with q keyword search
+    res_search = client.get("/api/cases/CASE002/EXHIBIT002/timeline?q=Hello")
+    assert len(res_search.json()["events"]) == 1
+    assert res_search.json()["events"][0]["id"] == sms_1_id
+
+    # 4. Test timeline pagination
+    res_pag = client.get("/api/cases/CASE002/EXHIBIT002/timeline?limit=1&offset=1&include_low=true")
+    assert len(res_pag.json()["events"]) == 1
+
+    # 5. Test timeline summary
+    res_sum = client.get("/api/cases/CASE002/EXHIBIT002/timeline/summary")
+    assert res_sum.status_code == 200
+    sum_data = res_sum.json()
+    assert sum_data["case_id"] == "CASE002"
+    assert sum_data["total_events"] >= 3
+
+    # 6. Test timeline details with debug=true
+    res_det = client.get(f"/api/cases/CASE002/EXHIBIT002/timeline/{sms_2_id}?debug=true")
+    assert res_det.status_code == 200
+    det_data = res_det.json()
+    assert "raw_json" in det_data
+    # secret_key inside raw_json should be redacted
+    raw_js = json.loads(det_data["raw_json"])
+    assert "secret_key" not in raw_js
+
+    # 7. Test timeline context
+    res_ctx = client.get(f"/api/cases/CASE002/EXHIBIT002/timeline/{sms_2_id}/context")
+    assert res_ctx.status_code == 200
+    ctx_data = res_ctx.json()
+    assert "previous" in ctx_data
+    assert "next" in ctx_data
+    assert "current" in ctx_data
+    # since sms_2 is in middle (timestamps: 1785149686, 1785157307, 1785160000)
+    # previous should contain sms_1, next should contain sms_3
+    assert len(ctx_data["previous"]) == 1
+    assert ctx_data["previous"][0]["id"] == sms_1_id
+    assert len(ctx_data["next"]) == 1
+    assert ctx_data["next"][0]["id"] == sms_3_id
+
+
+# ─── 16. Watchlist and Questioning Leads Heuristics & APIs ──────────────
+def test_questioning_leads(tmp_path):
+    from erakshak.dashboard.api import create_dashboard_app
+    from erakshak.dashboard.dashboard_indexer import build_evidence_index
+    from erakshak.dashboard.timeline_builder import build_timeline
+    from erakshak.dashboard.leads_engine import run_leads_engine, load_watchlist
+    from fastapi.testclient import TestClient
+
+    exhibit_root = _setup_case_folder(tmp_path)
+    
+    # 1. Write custom mock timeline data
+    # Create SMS (some with OTP, some deleted)
+    sms_path = exhibit_root / "derived" / "sms_messages.jsonl"
+    sms_path.write_text(
+        # Normal SMS
+        json.dumps({"id": "sms_1", "address": "+919876543210", "body": "Hello client, OTP code is 4321 for verification.", "date": "1785149686000", "type": "1"}) + "\n" +
+        # Deleted SMS
+        json.dumps({"id": "sms_2", "address": "+919876543210", "body": "This message was deleted", "date": "1785157307000", "type": "2"}) + "\n" +
+        # Suspicious APK SMS
+        json.dumps({"id": "sms_3", "address": "+919999999999", "body": "Click here to install the anydesk screen sharing application.", "date": "1785160000000", "type": "1"}) + "\n",
+        encoding="utf-8"
+    )
+    
+    # Create Calls (occurring within 15 minutes of deleted message sms_2)
+    calls_path = exhibit_root / "derived" / "calls.jsonl"
+    calls_path.write_text(
+        # Call occurring within 10 minutes of sms_2 (1785157307000 - 10 * 60 * 1000 = 1785156707000)
+        json.dumps({"number": "+919876543210", "type": "1", "date": "1785156707000", "duration": "45"}) + "\n",
+        encoding="utf-8"
+    )
+
+    # Create Location updates (with Surat locality 'Katargam')
+    locs_path = exhibit_root / "derived" / "locations.jsonl"
+    locs_path.write_text(
+        json.dumps({"latitude": "21.22", "longitude": "72.82", "timestamp": "1785157307000", "provider": "gps", "label": "Device active near Katargam locality"}) + "\n",
+        encoding="utf-8"
+    )
+
+    # Write preflight
+    pref_path = exhibit_root / "acquisition" / "preflight.json"
+    pref_path.write_text(
+        json.dumps({"case_id": "CASE003", "exhibit_id": "EX003", "device_time_raw": "Mon Jul 27 18:33:58 IST 2026"}) + "\n",
+        encoding="utf-8"
+    )
+
+    build_evidence_index(exhibit_root, "CASE003", "EX003")
+    build_timeline(
+        case_folder_path=str(exhibit_root),
+        case_id="CASE003",
+        exhibit_id="EX003",
+        recent_days=0, # All events
+        timezone="Asia/Kolkata",
+        rebuild=True
+    )
+
+    # 2. Assert watchlist config loads/falls back
+    watchlist = load_watchlist(exhibit_root)
+    assert "keywords" in watchlist
+    assert "otp" in watchlist["keywords"]
+    assert "katargam" in watchlist["location_keywords"]
+
+    # 3. Execute leads engine
+    res = run_leads_engine(
+        case_folder_path=str(exhibit_root),
+        case_id="CASE003",
+        exhibit_id="EX003",
+        recent_days=0,
+        rebuild=True
+    )
+    assert res["status"] == "success"
+    # We should have generated several leads (deleted_message_near_call, otp_near_payment_or_media, suspicious_apk_discussion, location_near_surat_locality)
+    assert res["total_generated"] > 0
+
+    # 4. Check stable rebuild: executing again without duplicate rows and preserving IDs
+    res_second = run_leads_engine(
+        case_folder_path=str(exhibit_root),
+        case_id="CASE003",
+        exhibit_id="EX003",
+        recent_days=0,
+        rebuild=False
+    )
+    assert res_second["total_generated"] == res["total_generated"]
+
+    # Verify no duplicate leads in the SQLite table
+    db_path = exhibit_root / "derived" / "evidence_index.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    count = conn.execute("SELECT COUNT(*) FROM questioning_leads").fetchone()[0]
+    assert count == res["total_generated"]
+
+    # Assert no lead exists without event_ids
+    empty_event_id_leads = conn.execute("SELECT COUNT(*) FROM questioning_leads WHERE event_ids IS NULL OR event_ids = '[]' OR event_ids = ''").fetchone()[0]
+    assert empty_event_id_leads == 0
+
+    # Fetch some sample leads to verify detail
+    sample_leads = [dict(r) for r in conn.execute("SELECT * FROM questioning_leads").fetchall()]
+    conn.close()
+
+    # Verify ID structure: starts with lead_ and is stable/lowercase
+    for l in sample_leads:
+        assert l["lead_id"].startswith("lead_")
+        assert len(l["lead_id"]) == 21  # lead_ + 16 chars
+
+    # 5. API integration tests
+    app = create_dashboard_app(db_path, exhibit_root, "CASE003", "EX003")
+    client = TestClient(app)
+
+    # API: List leads
+    api_res = client.get("/api/cases/CASE003/EX003/leads")
+    assert api_res.status_code == 200
+    leads_list = api_res.json()["leads"]
+    assert len(leads_list) == res["total_generated"]
+    
+    # Assert JSON arrays are parsed back correctly
+    assert isinstance(leads_list[0]["source_apps"], list)
+    assert isinstance(leads_list[0]["event_ids"], list)
+
+    # API: Leads summary
+    sum_res = client.get("/api/cases/CASE003/EX003/leads/summary")
+    assert sum_res.status_code == 200
+    summary_data = sum_res.json()
+    assert summary_data["total"] == res["total_generated"]
+    assert "disclaimer" in summary_data
+    assert "Questioning leads are automatically generated" in summary_data["disclaimer"]
+
+    # API: Linked timeline events
+    lead_id = leads_list[0]["lead_id"]
+    evs_res = client.get(f"/api/cases/CASE003/EX003/leads/{lead_id}/events")
+    assert evs_res.status_code == 200
+    linked_events = evs_res.json()
+    assert len(linked_events) > 0
+    # verify no secret leakage in linked events too
+    for e in linked_events:
+        assert "raw_json" not in e
+

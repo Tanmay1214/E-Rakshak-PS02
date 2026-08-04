@@ -1,6 +1,6 @@
 import { 
   Clock, MessageSquare, Phone, Image as ImageIcon, MapPin, 
-  Globe, Package, Wifi, Terminal, CheckCircle2
+  Globe, Package, Wifi, Terminal, CheckCircle2, HelpCircle
 } from 'lucide-react';
 import type { CaseSummary } from '../types/evidence';
 
@@ -16,6 +16,7 @@ interface SidebarProps {
   onCustomToDateChange: (date: string) => void;
   selectedSources: string[];
   onSelectedSourcesChange: (sources: string[]) => void;
+  leadsCount?: number;
 }
 
 export default function Sidebar({
@@ -29,7 +30,8 @@ export default function Sidebar({
   customToDate,
   onCustomToDateChange,
   selectedSources,
-  onSelectedSourcesChange
+  onSelectedSourcesChange,
+  leadsCount = 0
 }: SidebarProps) {
   
   // Calculate browser count
@@ -39,6 +41,7 @@ export default function Sidebar({
 
   const navItems = [
     { id: 'timeline', label: 'Timeline', icon: Clock, count: summary?.counts.timeline_events || 0 },
+    { id: 'leads', label: 'Questioning Leads', icon: HelpCircle, count: leadsCount, highlight: true },
     { id: 'messages', label: 'Messages', icon: MessageSquare, count: summary?.counts.messages || 0 },
     { id: 'calls', label: 'Calls', icon: Phone, count: summary?.counts.calls || 0 },
     { id: 'media', label: 'Media', icon: ImageIcon, count: summary?.counts.media || 0 },
@@ -83,7 +86,9 @@ export default function Sidebar({
                 className={`w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150 ${
                   isActive 
                     ? 'bg-accent text-white shadow-md font-bold' 
-                    : 'text-text-secondary hover:bg-panel-alt hover:text-text-primary'
+                    : item.highlight
+                      ? 'text-accent border border-accent/20 hover:bg-accent/5 hover:border-accent/40 bg-accent/5'
+                      : 'text-text-secondary hover:bg-panel-alt hover:text-text-primary'
                 }`}
               >
                 <div className="flex items-center gap-2.5">

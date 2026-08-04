@@ -20,9 +20,10 @@ import { useSystemEvents } from '../hooks/useSystemEvents';
 import { useLocations } from '../hooks/useLocations';
 import { useNetwork } from '../hooks/useNetwork';
 import { useBrowserHistory } from '../hooks/useBrowserHistory';
-import { fetchIntakeStatus } from '../services/api';
+import { fetchIntakeStatus, fetchQuestioningLeadsSummary } from '../services/api';
 import CaseIntakeWizard from './CaseIntakeWizard';
 import CaseInfoPage from './CaseInfoPage';
+import { LeadsPanel } from '../components/LeadsPanel';
 import type { TimelineEvent } from '../types/evidence';
 import { formatTimestamp, formatDuration, formatBytes, truncateText } from '../utils/formatters';
 import { AlertTriangle, AlertCircle, ShieldAlert, X } from 'lucide-react';
@@ -51,6 +52,15 @@ export default function CaseDashboard() {
   const [activeFilter, setActiveFilter] = useState('all');
   const [selectedEventId, setSelectedEventId] = useState<string | undefined>();
   const [intakeComplete, setIntakeComplete] = useState<boolean | null>(null);
+  const [leadsCount, setLeadsCount] = useState(0);
+
+  useEffect(() => {
+    if (summary?.case_id && summary?.exhibit_id) {
+      fetchQuestioningLeadsSummary(summary.case_id, summary.exhibit_id)
+        .then(res => setLeadsCount(res.total))
+        .catch(err => console.error("Error fetching leads summary", err));
+    }
+  }, [summary, activeView]);
 
   // Filter States
   const [timeRange, setTimeRange] = useState('7d');
@@ -235,10 +245,25 @@ export default function CaseDashboard() {
                 onClose={() => setSelectedEventId(undefined)} 
                 filteredEvents={filteredEvents}
                 onSelectEvent={handleSelectEvent}
+                caseId={summary?.case_id}
+                exhibitId={summary?.exhibit_id}
               />
             </div>
           </div>
         </div>
+      );
+    }
+
+    if (activeView === 'leads') {
+      return (
+        <LeadsPanel 
+          caseId={summary?.case_id || ''} 
+          exhibitId={summary?.exhibit_id || ''} 
+          onJumpToEvent={(eventId: string) => {
+            setActiveView('timeline');
+            setSelectedEventId(eventId);
+          }}
+        />
       );
     }
     
@@ -523,6 +548,7 @@ export default function CaseDashboard() {
         onCustomToDateChange={setCustomToDate}
         selectedSources={selectedSources}
         onSelectedSourcesChange={setSelectedSources}
+        leadsCount={leadsCount}
       />
       
       <div className="flex-1 flex flex-col min-w-0">
