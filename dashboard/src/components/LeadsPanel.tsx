@@ -7,12 +7,15 @@ import {
   Cpu, 
   ShieldAlert, 
   ArrowRight,
-  Filter
+  Filter,
+  Zap,
+  Loader2
 } from 'lucide-react';
 import { 
   fetchQuestioningLeads, 
   fetchQuestioningLeadsSummary, 
   fetchQuestioningLeadEvents, 
+  generateLeads,
   QuestioningLead, 
   LeadsSummary 
 } from '../services/api';
@@ -33,6 +36,10 @@ export const LeadsPanel = ({ caseId, exhibitId, onJumpToEvent }: LeadsPanelProps
   const [severityFilter, setSeverityFilter] = useState<string>('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [generateMode, setGenerateMode] = useState<'exact' | 'fuzzy' | 'ai'>('exact');
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [generateSuccess, setGenerateSuccess] = useState<string | null>(null);
 
   // Load leads list & summary
   const loadLeadsData = async () => {
@@ -109,6 +116,24 @@ export const LeadsPanel = ({ caseId, exhibitId, onJumpToEvent }: LeadsPanelProps
     return new Date(ms).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
   };
 
+  const handleGenerate = async () => {
+    setGenerating(true);
+    setGenerateError(null);
+    setGenerateSuccess(null);
+    try {
+      const res = await generateLeads(caseId, exhibitId, generateMode);
+      setGenerateSuccess(`Analysis complete — ${res.leads_count} leads generated.`);
+      // Auto-refresh leads list
+      await loadLeadsData();
+      // Auto-dismiss success message after 6 seconds
+      setTimeout(() => setGenerateSuccess(null), 6000);
+    } catch (err: any) {
+      setGenerateError(err.message || 'Lead generation failed. Check backend logs.');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full bg-[#0b0f19] text-[#cbd5e1] overflow-hidden">
       
@@ -175,6 +200,67 @@ export const LeadsPanel = ({ caseId, exhibitId, onJumpToEvent }: LeadsPanelProps
             <option value="low">Low & Above</option>
           </select>
         </div>
+      </div>
+
+      {/* Generate Questioning Leads Controls */}
+      <div className="p-3 border-b border-slate-800 bg-[#0c1221]">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <Zap className="h-4 w-4 text-indigo-400" />
+            <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Analysis Mode</span>
+          </div>
+          <select
+            id="generate-mode-select"
+            className="bg-[#1e293b]/50 border border-slate-700 rounded-md py-1.5 px-3 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors"
+            value={generateMode}
+            onChange={(e) => setGenerateMode(e.target.value as 'exact' | 'fuzzy' | 'ai')}
+            disabled={generating}
+          >
+            <option value="exact">⚡ Exact Match (Fastest, rigid)</option>
+            <option value="fuzzy">🔍 Fuzzy Match (Fast, catches typos)</option>
+            <option value="ai">🧠 AI Semantic Analysis (Slower, understands context — 22M param model)</option>
+          </select>
+          <button
+            id="run-analysis-button"
+            onClick={handleGenerate}
+            disabled={generating}
+            className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-xs font-semibold transition-all duration-200 ${
+              generating
+                ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/40'
+            }`}
+          >
+            {generating ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Analyzing...
+              </>
+            ) : (
+              <>
+                <Cpu className="h-3.5 w-3.5" />
+                Run Analysis
+              </>
+            )}
+          </button>
+        </div>
+        {generateError && (
+          <div className="mt-2 flex items-start gap-2 bg-red-950/30 border border-red-500/30 rounded-md p-2.5 text-xs text-red-300">
+            <AlertTriangle className="h-4 w-4 text-red-400 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <span className="font-semibold text-red-400">Generation Failed:</span> {generateError}
+            </div>
+            <button onClick={() => setGenerateError(null)} className="text-red-400 hover:text-red-300 font-bold text-sm leading-none">×</button>
+          </div>
+        )}
+        {generateSuccess && (
+          <div className="mt-2 flex items-start gap-2 bg-emerald-950/30 border border-emerald-500/30 rounded-md p-2.5 text-xs text-emerald-300">
+            <ShieldAlert className="h-4 w-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <span className="font-semibold text-emerald-400">Success:</span> {generateSuccess}
+            </div>
+            <button onClick={() => setGenerateSuccess(null)} className="text-emerald-400 hover:text-emerald-300 font-bold text-sm leading-none">×</button>
+          </div>
+        )}
       </div>
 
       {/* Split Body Layout */}

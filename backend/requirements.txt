@@ -5,3 +5,6 @@ sqlcipher3-wheels>=0.5.4
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 httpx>=0.25.0
+rapidfuzz>=3.0
+sentence-transformers>=2.2
+torch>=2.0

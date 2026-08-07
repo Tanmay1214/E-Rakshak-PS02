@@ -237,3 +237,20 @@ export async function fetchQuestioningLeadEvents(
 ): Promise<TimelineEvent[]> {
   return fetchJSON<TimelineEvent[]>(`${API_BASE}/cases/${caseId}/${exhibitId}/leads/${leadId}/events`);
 }
+
+export async function generateLeads(
+  caseId: string,
+  exhibitId: string,
+  mode: 'exact' | 'fuzzy' | 'ai'
+): Promise<{ status: string; leads_count: number }> {
+  const res = await fetch(`${API_BASE}/cases/${caseId}/${exhibitId}/leads/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Generation failed' }));
+    throw new Error(err.detail || 'Failed to generate leads');
+  }
+  return res.json();
+}

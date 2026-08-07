@@ -127,6 +127,9 @@ class EvidenceMetadataPayload(BaseModel):
     acquisition_tool_version: Optional[str] = None
     notes: Optional[str] = None
 
+class GenerateLeadsPayload(BaseModel):
+    mode: str = "exact"
+
 def create_dashboard_app(db_path: Path, exhibit_root: Path, case_id: str, exhibit_id: str) -> FastAPI:
     app = FastAPI(title="E-RAKSHAK Dashboard API")
     
@@ -531,7 +534,7 @@ def create_dashboard_app(db_path: Path, exhibit_root: Path, case_id: str, exhibi
                 "SELECT created_at FROM questioning_leads WHERE case_id = ? AND exhibit_id = ? ORDER BY created_at DESC LIMIT 1",
                 (case_id, exhibit_id)
             ).fetchone()
-            generated_at = created_row[0] if created_row else datetime.datetime.now(datetime.timezone.utc).isoformat()
+            generated_at = created_row[0] if created_row else datetime.utcnow().isoformat() + "Z"
             
             return {
                 "total": total,
@@ -590,6 +593,34 @@ def create_dashboard_app(db_path: Path, exhibit_root: Path, case_id: str, exhibi
             events = [dict(r) for r in cursor.fetchall()]
             
             return [sanitize_and_standardize_event(e, include_raw_json=False) for e in events]
+
+    @app.post("/api/cases/{case_id}/{exhibit_id}/leads/generate")
+    def generate_leads(case_id: str, exhibit_id: str, payload: GenerateLeadsPayload):
+        mode = payload.mode
+        if mode not in ("exact", "fuzzy", "ai"):
+            raise HTTPException(status_code=400, detail=f"Invalid mode '{mode}'. Must be 'exact', 'fuzzy', or 'ai'.")
+
+        # Resolve exhibit root folder path
+        target_exhibit = exhibit_root.parent.parent / case_id / exhibit_id
+        if not target_exhibit.exists():
+            raise HTTPException(status_code=404, detail=f"Exhibit folder not found for case {case_id} exhibit {exhibit_id}")
+
+        from erakshak.dashboard.leads_engine import run_leads_engine
+        try:
+            res = run_leads_engine(
+                case_folder_path=str(target_exhibit.resolve()),
+                case_id=case_id,
+                exhibit_id=exhibit_id,
+                flag_mode=mode,
+                rebuild=True,
+                from_datetime="1970-01-01 00:00:00",
+                min_severity="low"
+            )
+            return {"status": "success", "leads_count": res.get("total_generated", 0)}
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Lead generation failed: {str(e)[:300]}")
 
     @app.get("/api/timeline/{event_id}/context")
     def get_timeline_event_context_compat(event_id: str, debug: bool = False):

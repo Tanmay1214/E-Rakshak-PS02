@@ -1538,7 +1538,9 @@ def cmd_build_questioning_leads(args) -> None:
             to_datetime=getattr(args, "to_datetime", None),
             watchlist_path=getattr(args, "watchlist", None),
             min_severity=getattr(args, "min_severity", "medium"),
-            rebuild=getattr(args, "rebuild", False)
+            rebuild=getattr(args, "rebuild", False),
+            flag_mode=getattr(args, "flag_mode", "exact"),
+            ai_model=getattr(args, "ai_model", "all-MiniLM-L6-v2")
         )
         print(f"Leads generation completed successfully!")
         print(f"  Total generated: {res['total_generated']}")
@@ -1891,6 +1893,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp_leads.add_argument("--watchlist", help="Path to custom watchlist JSON file")
     sp_leads.add_argument("--min-severity", default="medium", help="Minimum severity of leads to generate (critical/high/medium/low)")
     sp_leads.add_argument("--rebuild", action="store_true", help="Clear and rebuild questioning leads database rows")
+    sp_leads.add_argument("--flag-mode", choices=["exact", "fuzzy", "ai"], default="exact", help="Message flagging mode: exact (default), fuzzy (rapidfuzz), or ai (sentence-transformers)")
+    sp_leads.add_argument("--ai-model", default="all-MiniLM-L6-v2", help="Sentence-transformer model name for AI mode (default: all-MiniLM-L6-v2)")
     sp_leads.set_defaults(func=cmd_build_questioning_leads)
 
     # ── dashboard ─────────────────────────────────────────────────

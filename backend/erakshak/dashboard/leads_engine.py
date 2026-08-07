@@ -29,6 +29,43 @@ DEFAULT_WATCHLIST = {
     ],
     "apk_keywords": [
         "apk", "install", "sideload", "unknown source"
+    ],
+    "bad_message_keywords": [
+        # Phishing / scam indicators
+        "urgent", "account locked", "verify", "click here",
+        "prize", "winner", "suspend", "congratulations",
+        "act now", "limited time", "expire", "confirm your",
+        # Racial / ethnic slurs
+        "nigger", "nigga", "chink", "gook", "spic", "kike",
+        "wetback", "coon", "darkie", "paki", "beaner",
+        "cracker", "honky", "gringo", "raghead", "towelhead",
+        "chinky", "negro",
+        # Profanity / abuse
+        "fuck", "bitch", "asshole", "bastard", "cunt",
+        "motherfucker", "dickhead", "whore", "slut",
+        "retard", "dumbass", "piece of shit",
+        # Threats / violence
+        "kill you", "i will kill", "gonna kill",
+        "murder", "stab", "shoot you", "beat you",
+        "rape", "molest", "assault", "attack you",
+        "bomb", "blow up", "burn alive",
+        "die", "death threat", "end your life",
+        # Harassment / intimidation
+        "stalk", "harass", "blackmail", "extort",
+        "leak your", "expose you", "ruin your life",
+        "send nudes", "nude pics", "revenge porn",
+        "doxx", "swat",
+        # Hate speech
+        "go back to your country", "terrorist",
+        "subhuman", "vermin", "filth", "scum",
+        "gas chamber", "lynch",
+        # Exploitation / grooming
+        "don't tell anyone", "keep this secret",
+        "send me photos", "how old are you",
+        "come alone", "meet me secretly",
+        # Substance / illegal
+        "drugs", "maal", "ganja", "cocaine", "heroin",
+        "meth", "deal", "supply", "contraband"
     ]
 }
 
@@ -80,7 +117,9 @@ def run_leads_engine(
     to_datetime: Optional[str] = None,
     watchlist_path: Optional[str] = None,
     min_severity: str = "medium",
-    rebuild: bool = False
+    rebuild: bool = False,
+    flag_mode: str = "exact",
+    ai_model: str = "all-MiniLM-L6-v2"
 ) -> Dict[str, Any]:
     """Execute the Level 2 questioning leads rules engine and save leads."""
     case_folder = Path(case_folder_path).resolve()
@@ -549,6 +588,129 @@ def run_leads_engine(
             "time_window_start": time_starts,
             "time_window_end": time_ends
         })
+
+    # -------------------------------------------------------------
+    # RULE 11: advanced_message_flagging (Severity: high)
+    # Dual-mode message flagging: exact, fuzzy, or ai semantic
+    # -------------------------------------------------------------
+    bad_keywords = watchlist.get("bad_message_keywords", DEFAULT_WATCHLIST.get("bad_message_keywords", []))
+    if bad_keywords and message_events:
+        if flag_mode == "fuzzy":
+            # Fuzzy matching via rapidfuzz
+            try:
+                from rapidfuzz import fuzz
+            except ImportError:
+                fuzz = None
+            if fuzz:
+                for msg in message_events:
+                    body = msg.get("summary") or msg.get("title") or ""
+                    if not body:
+                        continue
+                    for kw in bad_keywords:
+                        score = fuzz.partial_ratio(kw.lower(), body.lower())
+                        if score > 85:
+                            leads.append({
+                                "rule_id": "advanced_message_flagging",
+                                "severity": "high",
+                                "confidence": "high",
+                                "title": f"Suspicious Message (Fuzzy Match: '{kw}')",
+                                "summary": f"Message fuzzy-matched suspicious keyword '{kw}' with score {score}. Body preview: {body[:120]}",
+                                "suggested_question": f"Ask about the context of this message containing content similar to '{kw}'.",
+                                "category": "communication",
+                                "source_apps": [msg.get("source_app", "unknown")],
+                                "event_ids": [msg["id"]],
+                                "evidence_count": 1,
+                                "time_window_start": msg["timestamp_sort"],
+                                "time_window_end": msg["timestamp_sort"]
+                            })
+                            break  # One match per message is enough
+
+        elif flag_mode == "ai":
+            # AI semantic embedding matching via sentence-transformers
+            try:
+                from sentence_transformers import SentenceTransformer, util as st_util
+                model = SentenceTransformer(ai_model)
+
+                # Compute embeddings for suspicious concepts
+                concept_embeddings = model.encode(bad_keywords, convert_to_tensor=True)
+
+                for msg in message_events:
+                    body = msg.get("summary") or msg.get("title") or ""
+                    if not body or len(body.strip()) < 5:
+                        continue
+                    msg_embedding = model.encode(body, convert_to_tensor=True)
+                    cosine_scores = st_util.cos_sim(msg_embedding, concept_embeddings)[0]
+                    max_score = float(cosine_scores.max())
+                    best_idx = int(cosine_scores.argmax())
+                    if max_score > 0.45:
+                        matched_concept = bad_keywords[best_idx]
+                        leads.append({
+                            "rule_id": "advanced_message_flagging",
+                            "severity": "high",
+                            "confidence": "high" if max_score > 0.7 else ("medium" if max_score > 0.55 else "low"),
+                            "title": f"Suspicious Message (AI Semantic: '{matched_concept}')",
+                            "summary": f"Message semantically matched concept '{matched_concept}' with similarity {max_score:.2f}. Body preview: {body[:120]}",
+                            "suggested_question": f"Investigate the intent behind this message which semantically relates to '{matched_concept}'.",
+                            "category": "communication",
+                            "source_apps": [msg.get("source_app", "unknown")],
+                            "event_ids": [msg["id"]],
+                            "evidence_count": 1,
+                            "time_window_start": msg["timestamp_sort"],
+                            "time_window_end": msg["timestamp_sort"]
+                        })
+            except ImportError:
+                leads.append({
+                    "rule_id": "advanced_message_flagging",
+                    "severity": "low",
+                    "confidence": "low",
+                    "title": "AI Semantic Analysis Unavailable",
+                    "summary": "sentence-transformers or torch is not installed. Install them to use AI mode.",
+                    "suggested_question": "N/A",
+                    "category": "engine",
+                    "source_apps": [],
+                    "event_ids": [],
+                    "evidence_count": 0,
+                    "time_window_start": 0,
+                    "time_window_end": 0
+                })
+            except Exception as e:
+                leads.append({
+                    "rule_id": "advanced_message_flagging",
+                    "severity": "low",
+                    "confidence": "low",
+                    "title": "AI Semantic Analysis Failed",
+                    "summary": f"AI analysis encountered an error: {str(e)[:200]}",
+                    "suggested_question": "N/A",
+                    "category": "engine",
+                    "source_apps": [],
+                    "event_ids": [],
+                    "evidence_count": 0,
+                    "time_window_start": 0,
+                    "time_window_end": 0
+                })
+
+        else:
+            # Exact substring match (default behavior)
+            for msg in message_events:
+                body = msg.get("summary") or msg.get("title") or ""
+                if not body:
+                    continue
+                matched, matched_kw = contains_any(body, bad_keywords)
+                if matched:
+                    leads.append({
+                        "rule_id": "advanced_message_flagging",
+                        "severity": "high",
+                        "confidence": "high",
+                        "title": f"Suspicious Message (Exact Match: '{matched_kw}')",
+                        "summary": f"Message contains suspicious keyword '{matched_kw}'. Body preview: {body[:120]}",
+                        "suggested_question": f"Ask about the context of this message containing '{matched_kw}'.",
+                        "category": "communication",
+                        "source_apps": [msg.get("source_app", "unknown")],
+                        "event_ids": [msg["id"]],
+                        "evidence_count": 1,
+                        "time_window_start": msg["timestamp_sort"],
+                        "time_window_end": msg["timestamp_sort"]
+                    })
 
     # -------------------------------------------------------------
     # Post-filtering, stable ID generation, disclaimer mapping
